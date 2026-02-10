@@ -1,0 +1,156 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Insurance Dashboard Design System - Professional Corporate Theme */
+
+@layer base {
+  :root {
+    --background: 210 20% 98%;
+    --foreground: 215 25% 15%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 215 25% 15%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 215 25% 15%;
+
+    --primary: 210 70% 25%;
+    --primary-foreground: 210 40% 98%;
+
+    --secondary: 195 60% 45%;
+    --secondary-foreground: 0 0% 100%;
+
+    --muted: 210 20% 94%;
+    --muted-foreground: 215 15% 45%;
+
+    --accent: 195 80% 50%;
+    --accent-foreground: 0 0% 100%;
+
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+
+    --success: 142 71% 45%;
+    --success-foreground: 0 0% 100%;
+
+    --warning: 38 92% 50%;
+    --warning-foreground: 0 0% 100%;
+
+    --border: 214 20% 88%;
+    --input: 214 20% 88%;
+    --ring: 210 70% 25%;
+
+    --radius: 0.75rem;
+
+    --sidebar-background: 210 70% 20%;
+    --sidebar-foreground: 210 40% 98%;
+    --sidebar-primary: 195 80% 50%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 210 60% 30%;
+    --sidebar-accent-foreground: 210 40% 98%;
+    --sidebar-border: 210 50% 30%;
+    --sidebar-ring: 195 80% 50%;
+
+    /* Custom tokens */
+    --gradient-primary: linear-gradient(135deg, hsl(210 70% 25%), hsl(195 60% 45%));
+    --gradient-hero: linear-gradient(135deg, hsl(210 70% 20%), hsl(210 70% 35%), hsl(195 60% 45%));
+    --gradient-success: linear-gradient(135deg, hsl(142 71% 45%), hsl(160 60% 50%));
+    --gradient-warning: linear-gradient(135deg, hsl(38 92% 50%), hsl(45 93% 55%));
+    --gradient-card: linear-gradient(180deg, hsl(0 0% 100%), hsl(210 20% 98%));
+    
+    --shadow-soft: 0 2px 15px -3px hsl(210 70% 25% / 0.1), 0 4px 6px -4px hsl(210 70% 25% / 0.1);
+    --shadow-medium: 0 10px 40px -10px hsl(210 70% 25% / 0.15), 0 4px 20px -8px hsl(210 70% 25% / 0.1);
+    --shadow-glow: 0 0 30px -5px hsl(195 80% 50% / 0.3);
+  }
+
+  .dark {
+    --background: 215 25% 10%;
+    --foreground: 210 40% 98%;
+
+    --card: 215 25% 13%;
+    --card-foreground: 210 40% 98%;
+
+    --popover: 215 25% 13%;
+    --popover-foreground: 210 40% 98%;
+
+    --primary: 195 80% 50%;
+    --primary-foreground: 215 25% 10%;
+
+    --secondary: 210 50% 25%;
+    --secondary-foreground: 210 40% 98%;
+
+    --muted: 215 20% 18%;
+    --muted-foreground: 215 15% 60%;
+
+    --accent: 195 70% 45%;
+    --accent-foreground: 0 0% 100%;
+
+    --destructive: 0 62% 45%;
+    --destructive-foreground: 0 0% 100%;
+
+    --success: 142 60% 40%;
+    --success-foreground: 0 0% 100%;
+
+    --warning: 38 80% 45%;
+    --warning-foreground: 0 0% 100%;
+
+    --border: 215 20% 22%;
+    --input: 215 20% 22%;
+    --ring: 195 80% 50%;
+
+    --sidebar-background: 215 30% 8%;
+    --sidebar-foreground: 210 40% 98%;
+    --sidebar-primary: 195 80% 50%;
+    --sidebar-primary-foreground: 215 25% 10%;
+    --sidebar-accent: 215 25% 15%;
+    --sidebar-accent-foreground: 210 40% 98%;
+    --sidebar-border: 215 20% 18%;
+    --sidebar-ring: 195 80% 50%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-feature-settings: "cv11", "ss01";
+  }
+}
+
+@layer utilities {
+  .gradient-primary {
+    background: var(--gradient-primary);
+  }
+  
+  .gradient-hero {
+    background: var(--gradient-hero);
+  }
+  
+  .gradient-success {
+    background: var(--gradient-success);
+  }
+  
+  .gradient-warning {
+    background: var(--gradient-warning);
+  }
+  
+  .shadow-soft {
+    box-shadow: var(--shadow-soft);
+  }
+  
+  .shadow-medium {
+    box-shadow: var(--shadow-medium);
+  }
+  
+  .shadow-glow {
+    box-shadow: var(--shadow-glow);
+  }
+  
+  .glass {
+    backdrop-filter: blur(12px);
+    background: hsl(var(--background) / 0.8);
+  }
+}
