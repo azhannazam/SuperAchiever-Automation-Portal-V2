@@ -65,7 +65,7 @@ export default function Leaderboards() {
     try {
       setLoadingData(true);
       
-      // 1. Fetch cases with profile join and explicit type casting
+      // 1. Fetch ALL cases and join with profiles to get the 'rank'
       const { data, error } = await supabase
         .from('cases')
         .select(`
@@ -82,11 +82,13 @@ export default function Leaderboards() {
       if (data) {
         const tempMap: Record<string, LeaderboardEntry> = {};
 
-        // 2. Process data rows using the CaseRow type
         data.forEach((row: CaseRow) => {
           const code = row.agent_id;
           const profile = row.profiles;
           
+          // Use 'Agt' as the default if rank is null or not found
+          const agentRank = profile?.rank || "Agt";
+
           if (!tempMap[code]) {
             tempMap[code] = { 
               rank: 0, 
@@ -94,16 +96,20 @@ export default function Leaderboards() {
               agentCode: code, 
               cases: 0, 
               premium: 0,
-              category: profile?.rank || "Agt" 
+              category: agentRank 
             };
           }
           tempMap[code].cases += 1;
           tempMap[code].premium += Number(row.premium || 0);
         });
 
-        const categories: Record<string, LeaderboardEntry[]> = { GAD: [], AD: [], AGM: [], Agt: [] };
+        // 2. Initialize categories to match your Tabs exactly
+        const categories: Record<string, LeaderboardEntry[]> = { 
+          GAD: [], AD: [], AGM: [], Agt: [] 
+        };
         
         Object.values(tempMap).forEach((entry) => {
+          // Check if the rank exists in our categories, else put in 'Agt'
           if (categories[entry.category]) {
             categories[entry.category].push(entry);
           } else {
@@ -111,6 +117,7 @@ export default function Leaderboards() {
           }
         });
 
+        // 3. Sort by premium and assign Rank #
         Object.keys(categories).forEach(cat => {
           categories[cat].sort((a, b) => b.premium - a.premium);
           categories[cat] = categories[cat].map((item, index) => ({

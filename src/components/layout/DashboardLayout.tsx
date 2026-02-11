@@ -73,8 +73,13 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
         <div className="flex h-full flex-col">
           {/* Logo */}
           <div className="flex h-16 items-center gap-3 px-6 border-b border-sidebar-border">
-            <div className="rounded-lg bg-sidebar-primary p-2">
-              <Shield className="h-5 w-5 text-sidebar-primary-foreground" />
+            {/* REPLACE WITH LOGO.PNG */}
+            <div className="rounded-lg bg-white/10 p-1">
+              <img 
+                src="/logo.png" 
+                alt="SuperAchiever Logo" 
+                className="h-10 w-13 object-contain" 
+              />
             </div>
             <span className="font-bold text-lg text-sidebar-foreground">SuperAchiever</span>
             <button

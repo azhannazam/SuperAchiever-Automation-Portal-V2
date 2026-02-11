@@ -43,20 +43,33 @@ export default function Cases() {
   }, [user]);
 
   const fetchCases = async () => {
-    try {
-      const { data, error } = await supabase
-        .from("cases")
-        .select("*")
-        .order("created_at", { ascending: false });
+  try {
+    setLoadingData(true);
+    
+    // 1. Get the agent code for the logged-in user
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("agent_code")
+      .eq("id", user?.id)
+      .single();
 
-      if (error) throw error;
-      if (data) setCases(data);
-    } catch (error) {
-      console.error("Error fetching cases:", error);
-    } finally {
-      setLoadingData(false);
-    }
-  };
+    if (!profile?.agent_code) return;
+
+    // 2. Fetch only cases belonging to this agent_id
+    const { data, error } = await supabase
+      .from("cases")
+      .select("*")
+      .eq("agent_id", profile.agent_code) // Filter by your code
+      .order("submission_date", { ascending: false });
+
+    if (error) throw error;
+    setCases(data || []);
+  } catch (error) {
+    console.error("Error fetching cases:", error);
+  } finally {
+    setLoadingData(false);
+  }
+};
 
   if (isLoading) {
     return (

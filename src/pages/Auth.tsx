@@ -85,7 +85,7 @@ export default function Auth() {
     <img 
       src="/logo1.png" 
       alt="Powered by" 
-      className="h-6 w-auto brightness-0 invert" 
+      className="h-12 w-auto brightness-0 invert" 
     />
   </div>
 </div>
