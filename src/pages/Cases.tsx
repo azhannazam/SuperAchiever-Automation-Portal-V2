@@ -2,10 +2,9 @@ import { useEffect, useState } from "react";
 import { Navigate } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 import DashboardLayout from "@/components/layout/DashboardLayout";
-import { StatusBadge } from "@/components/ui/status-badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
 import {
   Table,
   TableBody,
@@ -14,223 +13,175 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { StatusBadge } from "@/components/ui/status-badge";
 import { supabase } from "@/integrations/supabase/client";
-import { FileText, Search, Loader2, CheckCircle2, Clock } from "lucide-react";
+import { Search, Download, FileText, Loader2, Filter } from "lucide-react";
 import { format } from "date-fns";
-
-interface CaseData {
-  id: string;
-  policy_number: string;
-  client_name: string;
-  product_type: string | null;
-  premium: number | null;
-  status: "approved" | "pending";
-  submission_date: string;
-  approval_date: string | null;
-}
 
 export default function Cases() {
   const { user, role, isLoading } = useAuth();
-  const [cases, setCases] = useState<CaseData[]>([]);
-  const [loadingData, setLoadingData] = useState(true);
+  const [cases, setCases] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
-  const [activeTab, setActiveTab] = useState("all");
+
+  const isAdmin = role === "admin" || user?.email === "admin@superachiever.com";
 
   useEffect(() => {
-    if (user) {
-      fetchCases();
-    }
-  }, [user]);
+    if (user) fetchCases();
+  }, [user, role]);
 
   const fetchCases = async () => {
-  try {
-    setLoadingData(true);
-    
-    // 1. Get the agent code for the logged-in user
-    const { data: profile } = await supabase
-      .from("profiles")
-      .select("agent_code")
-      .eq("id", user?.id)
-      .single();
+    try {
+      setLoading(true);
+      let query = (supabase.from("cases") as any).select("*");
 
-    if (!profile?.agent_code) return;
+      // LOGIC FORK: If not admin, filter by agent_code
+      if (!isAdmin) {
+        const { data: profile } = await supabase
+          .from("profiles")
+          .select("agent_code")
+          .eq("id", user?.id)
+          .maybeSingle();
 
-    // 2. Fetch only cases belonging to this agent_id
-    const { data, error } = await supabase
-      .from("cases")
-      .select("*")
-      .eq("agent_id", profile.agent_code) // Filter by your code
-      .order("submission_date", { ascending: false });
+        if (profile?.agent_code) {
+          query = query.eq("agent_id", profile.agent_code);
+        } else {
+          setCases([]);
+          setLoading(false);
+          return;
+        }
+      }
 
-    if (error) throw error;
-    setCases(data || []);
-  } catch (error) {
-    console.error("Error fetching cases:", error);
-  } finally {
-    setLoadingData(false);
-  }
-};
+      const { data, error } = await query.order("submission_date", { ascending: false });
+      if (error) throw error;
+      setCases(data || []);
+    } catch (error) {
+      console.error("Error fetching cases:", error);
+    } finally {
+      setLoading(false);
+    }
+  };
 
-  if (isLoading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-background">
-        <Loader2 className="h-8 w-8 animate-spin text-primary" />
-      </div>
-    );
-  }
+  // CSV Export Logic for Admin
+  const handleExportCSV = () => {
+    const headers = ["Policy Number", "Agent ID", "Agent Name", "Product", "Premium", "Status", "Date"];
+    const csvContent = [
+      headers.join(","),
+      ...cases.map(c => [
+        c.policy_number,
+        c.agent_id,
+        `"${c.client_name}"`, // Quote names to handle commas
+        c.product_type,
+        c.premium,
+        c.status,
+        format(new Date(c.submission_date), "yyyy-MM-dd")
+      ].join(","))
+    ].join("\n");
 
-  if (!user) {
-    return <Navigate to="/auth" replace />;
-  }
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const link = document.createElement("a");
+    const url = URL.createObjectURL(blob);
+    link.setAttribute("href", url);
+    link.setAttribute("download", `All_Cases_Report_${format(new Date(), "yyyyMMdd")}.csv`);
+    link.style.visibility = "hidden";
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
 
-  const filteredCases = cases.filter((c) => {
-    const matchesSearch =
-      c.policy_number.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      c.client_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      c.product_type?.toLowerCase().includes(searchQuery.toLowerCase());
-    
-    if (activeTab === "all") return matchesSearch;
-    return matchesSearch && c.status === activeTab;
-  });
+  const filteredCases = cases.filter(c => 
+    c.policy_number?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    c.client_name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    c.agent_id?.toLowerCase().includes(searchQuery.toLowerCase())
+  );
 
-  const approvedCount = cases.filter((c) => c.status === "approved").length;
-  const pendingCount = cases.filter((c) => c.status === "pending").length;
+  if (isLoading) return <div className="min-h-screen flex items-center justify-center"><Loader2 className="animate-spin" /></div>;
+  if (!user) return <Navigate to="/auth" replace />;
 
   return (
     <DashboardLayout>
       <div className="space-y-6">
-        {/* Page header */}
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
           <div>
-            <h1 className="text-2xl font-bold tracking-tight">Cases</h1>
+            <h1 className="text-2xl font-bold tracking-tight">
+              {isAdmin ? "Global Case Management" : "My Cases"}
+            </h1>
             <p className="text-muted-foreground">
-              {role === "admin" ? "Manage all submitted cases" : "View your submitted cases"}
+              {isAdmin ? `Viewing all ${cases.length} submissions in the system` : "View and manage your policy submissions"}
             </p>
           </div>
           
-          {/* Search */}
-          <div className="relative w-full sm:w-72">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            <Input
-              placeholder="Search cases..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="pl-9"
-            />
-          </div>
+          {isAdmin && (
+            <Button onClick={handleExportCSV} className="flex gap-2">
+              <Download className="h-4 w-4" /> Export All to CSV
+            </Button>
+          )}
         </div>
 
-        {/* Stats */}
-        <div className="grid gap-4 md:grid-cols-3">
-          <Card className="shadow-soft">
-            <CardContent className="flex items-center gap-4 p-4">
-              <div className="rounded-xl bg-primary/10 p-3">
-                <FileText className="h-6 w-6 text-primary" />
+        <Card className="border-none shadow-soft">
+          <CardHeader className="pb-3">
+            <div className="flex items-center gap-4">
+              <div className="relative flex-1">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <Input 
+                  placeholder={isAdmin ? "Search Policy, Client, or Agent ID..." : "Search Policy or Client..."} 
+                  className="pl-10"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                />
               </div>
-              <div>
-                <p className="text-2xl font-bold">{cases.length}</p>
-                <p className="text-sm text-muted-foreground">Total Cases</p>
-              </div>
-            </CardContent>
-          </Card>
-          <Card className="shadow-soft">
-            <CardContent className="flex items-center gap-4 p-4">
-              <div className="rounded-xl bg-success/10 p-3">
-                <CheckCircle2 className="h-6 w-6 text-success" />
-              </div>
-              <div>
-                <p className="text-2xl font-bold">{approvedCount}</p>
-                <p className="text-sm text-muted-foreground">Approved</p>
-              </div>
-            </CardContent>
-          </Card>
-          <Card className="shadow-soft">
-            <CardContent className="flex items-center gap-4 p-4">
-              <div className="rounded-xl bg-warning/10 p-3">
-                <Clock className="h-6 w-6 text-warning" />
-              </div>
-              <div>
-                <p className="text-2xl font-bold">{pendingCount}</p>
-                <p className="text-sm text-muted-foreground">Pending</p>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-
-        {/* Cases table */}
-        <Card className="shadow-soft">
-          <CardHeader>
-            <Tabs value={activeTab} onValueChange={setActiveTab}>
-              <TabsList>
-                <TabsTrigger value="all">All ({cases.length})</TabsTrigger>
-                <TabsTrigger value="approved">Approved ({approvedCount})</TabsTrigger>
-                <TabsTrigger value="pending">Pending ({pendingCount})</TabsTrigger>
-              </TabsList>
-            </Tabs>
+              <Button variant="outline" size="icon"><Filter className="h-4 w-4" /></Button>
+            </div>
           </CardHeader>
           <CardContent>
-            {loadingData ? (
-              <div className="flex items-center justify-center py-12">
-                <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-              </div>
+            {loading ? (
+              <div className="py-20 text-center"><Loader2 className="animate-spin mx-auto h-8 w-8 text-primary" /></div>
             ) : filteredCases.length === 0 ? (
-              <div className="text-center py-12 text-muted-foreground">
-                <FileText className="h-12 w-12 mx-auto mb-3 opacity-50" />
-                <p className="font-medium">No cases found</p>
-                <p className="text-sm">
-                  {searchQuery ? "Try adjusting your search" : "Cases will appear here once submitted"}
-                </p>
+              <div className="py-20 text-center text-muted-foreground">
+                <FileText className="h-12 w-12 mx-auto mb-4 opacity-20" />
+                <p>No records found matching your search.</p>
               </div>
             ) : (
-              <div className="overflow-x-auto">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Policy Number</TableHead>
-                      <TableHead>Client Name</TableHead>
-                      <TableHead>Product</TableHead>
-                      <TableHead className="text-right">Premium</TableHead>
-                      <TableHead>Submitted</TableHead>
-                      <TableHead>Status</TableHead>
+              <Table>
+                <TableHeader>
+                  <TableRow className="bg-slate-50/50">
+                    <TableHead className="font-bold">Date</TableHead>
+                    <TableHead className="font-bold">Policy #</TableHead>
+                    {isAdmin && <TableHead className="font-bold">Agent ID</TableHead>}
+                    <TableHead className="font-bold">Agent Name</TableHead>
+                    <TableHead className="font-bold">Product</TableHead>
+                    <TableHead className="text-right font-bold">Premium</TableHead>
+                    <TableHead className="font-bold">Status</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {filteredCases.map((item) => (
+                    <TableRow key={item.id} className="hover:bg-slate-50/50 transition-colors">
+                      <TableCell className="text-xs text-muted-foreground">
+                        {format(new Date(item.submission_date), "dd MMM yyyy")}
+                      </TableCell>
+                      <TableCell className="font-mono text-xs font-bold">{item.policy_number}</TableCell>
+                      {isAdmin && (
+                        <TableCell className="text-xs">
+                          <span className="bg-primary/10 text-primary px-2 py-0.5 rounded font-bold uppercase">
+                            {item.agent_id}
+                          </span>
+                        </TableCell>
+                      )}
+                      <TableCell className="font-medium">{item.client_name}</TableCell>
+                      <TableCell className="text-muted-foreground text-xs">{item.product_type || "N/A"}</TableCell>
+                      <TableCell className="text-right font-bold">
+                        RM {Number(item.premium || 0).toLocaleString()}
+                      </TableCell>
+                      <TableCell>
+                        <StatusBadge variant={item.status === "approved" ? "approved" : "pending"}>
+                          {item.status}
+                        </StatusBadge>
+                      </TableCell>
                     </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {filteredCases.map((caseItem) => (
-                      <TableRow key={caseItem.id} className="hover:bg-muted/50">
-                        <TableCell className="font-medium font-mono">
-                          {caseItem.policy_number}
-                        </TableCell>
-                        <TableCell>{caseItem.client_name}</TableCell>
-                        <TableCell className="text-muted-foreground">
-                          {caseItem.product_type || "-"}
-                        </TableCell>
-                        <TableCell className="text-right font-medium">
-                          {caseItem.premium
-                            ? `RM ${caseItem.premium.toLocaleString()}`
-                            : "-"}
-                        </TableCell>
-                        <TableCell className="text-muted-foreground">
-                          {format(new Date(caseItem.submission_date), "MMM d, yyyy")}
-                        </TableCell>
-                        <TableCell>
-                          <StatusBadge
-                            variant={caseItem.status === "approved" ? "approved" : "pending"}
-                            icon={
-                              caseItem.status === "approved" ? (
-                                <CheckCircle2 className="h-3 w-3" />
-                              ) : (
-                                <Clock className="h-3 w-3" />
-                              )
-                            }
-                          >
-                            {caseItem.status}
-                          </StatusBadge>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
+                  ))}
+                </TableBody>
+              </Table>
             )}
           </CardContent>
         </Card>

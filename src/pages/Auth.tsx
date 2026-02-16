@@ -261,7 +261,7 @@ function SignupForm({ onSuccess }: { onSuccess: () => void }) {
         <Input
           id="fullName"
           type="text"
-          placeholder="John Doe"
+          placeholder="Azhan Nazam"
           value={fullName}
           onChange={(e) => setFullName(e.target.value)}
           className={errors.fullName ? "border-destructive" : ""}

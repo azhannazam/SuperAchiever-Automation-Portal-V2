@@ -4,9 +4,11 @@ import { useAuth } from "@/hooks/useAuth";
 import DashboardLayout from "@/components/layout/DashboardLayout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Button } from "@/components/ui/button";
 import { supabase } from "@/integrations/supabase/client";
-import { Trophy, Medal, Award, Crown, Loader2, Users } from "lucide-react";
+import { Trophy, Medal, Award, Crown, Loader2, Users, Download } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { format } from "date-fns";
 
 // --- TYPES & INTERFACES ---
 interface CaseRow {
@@ -48,12 +50,14 @@ function getRankIcon(rank: number) {
 }
 
 export default function Leaderboards() {
-  const { user, isLoading } = useAuth();
+  const { user, role, isLoading } = useAuth();
   const [activeCategory, setActiveCategory] = useState("GAD");
   const [leaderboardData, setLeaderboardData] = useState<Record<string, LeaderboardEntry[]>>({
     GAD: [], AD: [], AGM: [], Agt: []
   });
   const [loadingData, setLoadingData] = useState(true);
+
+  const isAdmin = role === "admin" || user?.email === "admin@superachiever.com";
 
   useEffect(() => {
     if (user) {
@@ -65,7 +69,6 @@ export default function Leaderboards() {
     try {
       setLoadingData(true);
       
-      // 1. Fetch ALL cases and join with profiles to get the 'rank'
       const { data, error } = await supabase
         .from('cases')
         .select(`
@@ -85,8 +88,6 @@ export default function Leaderboards() {
         data.forEach((row: CaseRow) => {
           const code = row.agent_id;
           const profile = row.profiles;
-          
-          // Use 'Agt' as the default if rank is null or not found
           const agentRank = profile?.rank || "Agt";
 
           if (!tempMap[code]) {
@@ -103,13 +104,11 @@ export default function Leaderboards() {
           tempMap[code].premium += Number(row.premium || 0);
         });
 
-        // 2. Initialize categories to match your Tabs exactly
         const categories: Record<string, LeaderboardEntry[]> = { 
           GAD: [], AD: [], AGM: [], Agt: [] 
         };
         
         Object.values(tempMap).forEach((entry) => {
-          // Check if the rank exists in our categories, else put in 'Agt'
           if (categories[entry.category]) {
             categories[entry.category].push(entry);
           } else {
@@ -117,7 +116,6 @@ export default function Leaderboards() {
           }
         });
 
-        // 3. Sort by premium and assign Rank #
         Object.keys(categories).forEach(cat => {
           categories[cat].sort((a, b) => b.premium - a.premium);
           categories[cat] = categories[cat].map((item, index) => ({
@@ -133,6 +131,32 @@ export default function Leaderboards() {
     } finally {
       setLoadingData(false);
     }
+  };
+
+  // CSV Export Logic
+  const handleExportCSV = () => {
+    const currentData = leaderboardData[activeCategory] || [];
+    const headers = ["Rank", "Name", "Agent Code", "Total Cases", "Total Premium (RM)"];
+    
+    const csvContent = [
+      headers.join(","),
+      ...currentData.map(entry => [
+        entry.rank,
+        `"${entry.name}"`,
+        entry.agentCode,
+        entry.cases,
+        entry.premium.toFixed(2)
+      ].join(","))
+    ].join("\n");
+
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.setAttribute("href", url);
+    link.setAttribute("download", `${activeCategory}_Leaderboard_${format(new Date(), "yyyyMMdd")}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
   };
 
   if (isLoading) {
@@ -152,14 +176,23 @@ export default function Leaderboards() {
   return (
     <DashboardLayout>
       <div className="space-y-6">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
-            <Trophy className="h-7 w-7 text-warning" />
-            Live Leaderboards
-          </h1>
-          <p className="text-muted-foreground">
-            Real-time rankings across all rank categories
-          </p>
+        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+          <div>
+            <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
+              <Trophy className="h-7 w-7 text-warning" />
+              Live Leaderboards
+            </h1>
+            <p className="text-muted-foreground">
+              Real-time rankings across all rank categories
+            </p>
+          </div>
+          
+          {/* Admin Export Button */}
+          {isAdmin && (
+            <Button onClick={handleExportCSV} className="flex gap-2 shadow-md">
+              <Download className="h-4 w-4" /> Export {activeCategory} Rankings
+            </Button>
+          )}
         </div>
 
         <Tabs value={activeCategory} onValueChange={setActiveCategory}>
