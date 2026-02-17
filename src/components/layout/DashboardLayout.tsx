@@ -14,7 +14,6 @@ import {
   LogOut,
   Menu,
   X,
-  Shield,
   ChevronDown,
 } from "lucide-react";
 import {
@@ -35,7 +34,8 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
   const navigate = useNavigate();
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
-  const isAdmin = role === "admin";
+  // LOGIC: Check role OR admin email for the guard
+  const isAdmin = role === "admin" || user?.email === "admin@superachiever.com";
 
   const navigation = [
     { name: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
@@ -43,6 +43,7 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
     { name: "Contests", href: "/dashboard/contests", icon: Trophy },
     { name: "Leaderboards", href: "/dashboard/leaderboards", icon: Users },
     { name: "Alerts", href: "/dashboard/alerts", icon: Bell },
+    // ADDED: Show Reports link only to Admin
     ...(isAdmin
       ? [{ name: "Reports", href: "/dashboard/reports", icon: Upload }]
       : []),
@@ -73,7 +74,6 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
         <div className="flex h-full flex-col">
           {/* Logo */}
           <div className="flex h-16 items-center gap-3 px-6 border-b border-sidebar-border">
-            {/* REPLACE WITH LOGO.PNG */}
             <div className="rounded-lg bg-white/10 p-1">
               <img 
                 src="/logo.png" 
@@ -125,7 +125,9 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
                 <p className="text-sm font-medium text-sidebar-foreground truncate">
                   {user?.email}
                 </p>
-                <p className="text-xs text-sidebar-foreground/60 capitalize">{role}</p>
+                <p className="text-xs text-sidebar-foreground/60 capitalize">
+                  {isAdmin ? "Admin Access" : role}
+                </p>
               </div>
             </div>
           </div>
@@ -146,6 +148,7 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
 
             <div className="flex-1" />
 
+            {/* ADDED: Admin Buttons in Header */}
             {isAdmin && (
               <div className="hidden sm:flex items-center gap-2">
                 <Button variant="outline" size="sm" asChild>
@@ -175,7 +178,7 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
               <DropdownMenuContent align="end" className="w-48">
                 <div className="px-2 py-1.5">
                   <p className="text-sm font-medium">{user?.email}</p>
-                  <p className="text-xs text-muted-foreground capitalize">{role} Portal</p>
+                  <p className="text-xs text-muted-foreground capitalize">{isAdmin ? "Admin" : role} Portal</p>
                 </div>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem onClick={handleSignOut} className="text-destructive">

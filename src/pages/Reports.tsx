@@ -6,17 +6,19 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { supabase } from "@/integrations/supabase/client";
 import {
   Upload,
-  Download,
   FileSpreadsheet,
   Loader2,
   CheckCircle2,
   AlertCircle,
   Clock,
+  Database,
 } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
+import * as XLSX from "xlsx";
 
 interface ReportHistory {
   id: string;
@@ -26,53 +28,17 @@ interface ReportHistory {
   recordsProcessed?: number;
 }
 
-// Mock report history
-const mockHistory: ReportHistory[] = [
-  {
-    id: "1",
-    fileName: "Report_316_2024-01-15.xlsx",
-    uploadDate: "2024-01-15T10:30:00Z",
-    status: "processed",
-    recordsProcessed: 45,
-  },
-  {
-    id: "2",
-    fileName: "Report_316_2024-01-14.xlsx",
-    uploadDate: "2024-01-14T09:15:00Z",
-    status: "processed",
-    recordsProcessed: 38,
-  },
-  {
-    id: "3",
-    fileName: "Report_316_2024-01-13.xlsx",
-    uploadDate: "2024-01-13T11:00:00Z",
-    status: "processed",
-    recordsProcessed: 52,
-  },
-];
-
 export default function Reports() {
-  const { user, role, isLoading } = useAuth();
+  const { user, role, isLoading: authLoading } = useAuth();
   const [uploading, setUploading] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [reportHistory, setReportHistory] = useState<ReportHistory[]>(mockHistory);
+  const [previewData, setPreviewData] = useState<any[]>([]);
+  const [reportHistory, setReportHistory] = useState<ReportHistory[]>([]);
 
-  if (isLoading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-background">
-        <Loader2 className="h-8 w-8 animate-spin text-primary" />
-      </div>
-    );
-  }
+  const isAdmin = role === "admin" || user?.email === "admin@superachiever.com";
 
-  if (!user) {
-    return <Navigate to="/auth" replace />;
-  }
-
-  // Only admins can access this page
-  if (role !== "admin") {
-    return <Navigate to="/dashboard" replace />;
-  }
+  if (authLoading) return <div className="min-h-screen flex items-center justify-center"><Loader2 className="animate-spin text-primary" /></div>;
+  if (!user || !isAdmin) return <Navigate to="/dashboard" replace />;
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -82,185 +48,155 @@ export default function Reports() {
         return;
       }
       setSelectedFile(file);
+      
+      const reader = new FileReader();
+      reader.onload = (evt) => {
+        const bstr = evt.target?.result;
+        const wb = XLSX.read(bstr, { type: "binary" });
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        const data = XLSX.utils.sheet_to_json(ws);
+        setPreviewData(data);
+      };
+      reader.readAsBinaryString(file);
     }
   };
 
   const handleUpload = async () => {
-    if (!selectedFile) {
-      toast.error("Please select a file first");
+    if (!selectedFile || previewData.length === 0) {
+      toast.error("No data found in file.");
       return;
     }
 
     setUploading(true);
     
-    // Simulate upload delay
-    await new Promise((resolve) => setTimeout(resolve, 2000));
-    
-    const newReport: ReportHistory = {
-      id: Date.now().toString(),
-      fileName: selectedFile.name,
-      uploadDate: new Date().toISOString(),
-      status: "pending",
-    };
-    
-    setReportHistory((prev) => [newReport, ...prev]);
-    setSelectedFile(null);
-    setUploading(false);
-    toast.success("Report uploaded successfully! Processing will begin shortly.");
-  };
+    try {
+      // MAPPING LOGIC: Matched to your PROPOSALNO/AFYC headers
+      const formattedData = previewData.map((row: any) => ({
+        policy_number: String(row["POLICYNO"] || row["PROPOSALNO"]),
+        agent_id: String(row["AGENT_CODE"]),
+        client_name: row["CLIENT_CHOICE"] || row["AGENT_NAME"] || "Unknown Client",
+        product_type: row["PRODUCT_NAME"],
+        premium: parseFloat(row["AFYC"] || row["ANNUAL_PREM"] || 0),
+        status: String(row["POLY_STATUS"] || "approved").toLowerCase(),
+        submission_date: row["ENTRY_DATE"] ? new Date(row["ENTRY_DATE"]).toISOString() : new Date().toISOString(),
+      })).filter(item => item.policy_number !== "undefined" && item.agent_id !== "undefined");
 
-  const handleExport = () => {
-    toast.success("Daily Submission report is being generated...");
-    // In production, this would trigger an actual file download
+      // BULK UPSERT
+      const { error } = await supabase
+        .from("cases")
+        .upsert(formattedData, { onConflict: "policy_number" });
+
+      if (error) throw error;
+
+      const newReport: ReportHistory = {
+        id: Date.now().toString(),
+        fileName: selectedFile.name,
+        uploadDate: new Date().toISOString(),
+        status: "processed",
+        recordsProcessed: formattedData.length
+      };
+      
+      setReportHistory((prev) => [newReport, ...prev]);
+      setSelectedFile(null);
+      setPreviewData([]);
+      toast.success(`Successfully synced ${formattedData.length} records to the portal!`);
+    } catch (error: any) {
+      console.error(error);
+      toast.error(`Sync failed: ${error.message}`);
+    } finally {
+      setUploading(false);
+    }
   };
 
   const getStatusIcon = (status: ReportHistory["status"]) => {
     switch (status) {
-      case "processed":
-        return <CheckCircle2 className="h-4 w-4 text-success" />;
-      case "pending":
-        return <Clock className="h-4 w-4 text-warning animate-pulse" />;
-      case "error":
-        return <AlertCircle className="h-4 w-4 text-destructive" />;
+      case "processed": return <CheckCircle2 className="h-4 w-4 text-emerald-500" />;
+      case "pending": return <Clock className="h-4 w-4 text-amber-500 animate-pulse" />;
+      case "error": return <AlertCircle className="h-4 w-4 text-destructive" />;
     }
   };
 
   return (
     <DashboardLayout>
       <div className="space-y-6">
-        {/* Page header */}
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Reports Management</h1>
-          <p className="text-muted-foreground">
-            Upload Report 316 files and download daily submissions
-          </p>
+          <h1 className="text-2xl font-bold tracking-tight text-slate-900">Master Data Management</h1>
+          <p className="text-muted-foreground">Sync Report 316 data directly to the agent production system</p>
         </div>
 
-        {/* Upload and Export cards */}
         <div className="grid gap-6 md:grid-cols-2">
-          {/* Upload card */}
-          <Card className="shadow-soft">
+          <Card className="shadow-soft border-none bg-white">
             <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Upload className="h-5 w-5 text-primary" />
-                Upload Report 316
+              <CardTitle className="flex items-center gap-2 text-primary">
+                <Upload className="h-5 w-5" /> Bulk Sync
               </CardTitle>
-              <CardDescription>
-                Upload the daily Report 316 Excel file to process SuperE-related data
-              </CardDescription>
+              <CardDescription>Upload Master Report 316 to update all 164+ records</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div className="border-2 border-dashed border-border rounded-lg p-6 text-center hover:border-primary/50 transition-colors">
-                <FileSpreadsheet className="h-10 w-10 mx-auto text-muted-foreground mb-3" />
+              <div className="border-2 border-dashed border-slate-200 rounded-xl p-8 text-center hover:bg-slate-50 transition-all">
+                <FileSpreadsheet className="h-12 w-12 mx-auto text-slate-300 mb-4" />
                 <Label htmlFor="file-upload" className="cursor-pointer">
-                  <span className="text-sm text-muted-foreground">
-                    {selectedFile ? (
-                      <span className="text-foreground font-medium">
-                        {selectedFile.name}
-                      </span>
-                    ) : (
-                      <>
-                        Drag and drop or{" "}
-                        <span className="text-primary font-medium">browse</span> to upload
-                      </>
-                    )}
+                  <span className="text-sm font-bold text-slate-600">
+                    {selectedFile ? selectedFile.name : "Drag Master Excel here or browse"}
                   </span>
-                  <Input
-                    id="file-upload"
-                    type="file"
-                    accept=".xlsx,.xls"
-                    className="hidden"
-                    onChange={handleFileChange}
-                  />
+                  <Input id="file-upload" type="file" accept=".xlsx,.xls" className="hidden" onChange={handleFileChange} />
                 </Label>
-                <p className="text-xs text-muted-foreground mt-2">
-                  Supports .xlsx and .xls files
-                </p>
               </div>
-              <Button
-                className="w-full"
-                onClick={handleUpload}
-                disabled={!selectedFile || uploading}
-              >
-                {uploading ? (
-                  <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    Uploading...
-                  </>
-                ) : (
-                  <>
-                    <Upload className="mr-2 h-4 w-4" />
-                    Upload Report
-                  </>
-                )}
+              <Button className="w-full font-bold" onClick={handleUpload} disabled={!selectedFile || uploading}>
+                {uploading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Database className="mr-2 h-4 w-4" />}
+                {uploading ? "Syncing Database..." : "Sync to Supabase"}
               </Button>
             </CardContent>
           </Card>
 
-          {/* Export card */}
-          <Card className="shadow-soft">
+          <Card className="shadow-soft border-none bg-[#0F172A] text-white">
             <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Download className="h-5 w-5 text-success" />
-                Download Daily Submission
-              </CardTitle>
-              <CardDescription>
-                Export the latest processed data as a Daily Submission report
-              </CardDescription>
+              <CardTitle className="flex items-center gap-2 text-primary"><Database className="h-5 w-5" /> Sync Overview</CardTitle>
             </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="rounded-lg bg-muted/50 p-6 text-center">
-                <FileSpreadsheet className="h-10 w-10 mx-auto text-success mb-3" />
-                <p className="text-sm font-medium">Daily Submission Report</p>
-                <p className="text-xs text-muted-foreground mt-1">
-                  Last updated: {format(new Date(), "MMM d, yyyy 'at' h:mm a")}
-                </p>
+            <CardContent className="space-y-6">
+              <div className="flex justify-between border-b border-white/10 pb-2">
+                <span className="text-white/70 text-sm font-medium">Data Pending Sync</span>
+                <span className="text-xl font-black">{previewData.length}</span>
               </div>
-              <Button variant="outline" className="w-full" onClick={handleExport}>
-                <Download className="mr-2 h-4 w-4" />
-                Download Report
-              </Button>
+              <div className="p-4 bg-white/5 rounded-lg border border-white/10">
+                <p className="text-[10px] font-black uppercase tracking-widest text-primary mb-2">Detected Mappings</p>
+                <div className="grid grid-cols-2 gap-y-1 text-[11px] font-bold text-white/80">
+                  <span>ID: POLICYNO</span>
+                  <span>PREM: AFYC</span>
+                  <span>AGENT: AGENT_CODE</span>
+                  <span>PROD: PRODUCT_NAME</span>
+                </div>
+              </div>
             </CardContent>
           </Card>
         </div>
 
-        {/* Report history */}
-        <Card className="shadow-soft">
+        <Card className="shadow-soft border-none bg-white">
           <CardHeader>
-            <CardTitle>Upload History</CardTitle>
-            <CardDescription>
-              Recent Report 316 uploads and their processing status
-            </CardDescription>
+            <CardTitle className="text-lg">Recent Sync History</CardTitle>
           </CardHeader>
           <CardContent>
             {reportHistory.length === 0 ? (
-              <div className="text-center py-8 text-muted-foreground">
-                <FileSpreadsheet className="h-10 w-10 mx-auto mb-2 opacity-50" />
-                <p>No reports uploaded yet</p>
+              <div className="text-center py-10 text-slate-400">
+                <Clock className="h-10 w-10 mx-auto mb-2 opacity-20" />
+                <p className="text-sm font-bold">No recent sync activity</p>
               </div>
             ) : (
               <div className="space-y-3">
                 {reportHistory.map((report) => (
-                  <div
-                    key={report.id}
-                    className="flex items-center justify-between rounded-lg border p-4 hover:bg-muted/50 transition-colors"
-                  >
-                    <div className="flex items-center gap-3">
-                      <FileSpreadsheet className="h-8 w-8 text-success" />
+                  <div key={report.id} className="flex items-center justify-between rounded-xl border border-slate-50 p-4 bg-slate-50/50">
+                    <div className="flex items-center gap-4">
+                      <div className="bg-emerald-100 p-2 rounded-lg"><FileSpreadsheet className="h-5 w-5 text-emerald-600" /></div>
                       <div>
-                        <p className="font-medium text-sm">{report.fileName}</p>
-                        <p className="text-xs text-muted-foreground">
-                          Uploaded {format(new Date(report.uploadDate), "MMM d, yyyy 'at' h:mm a")}
+                        <p className="font-bold text-sm text-slate-700">{report.fileName}</p>
+                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-tight">
+                          Synced {format(new Date(report.uploadDate), "dd MMM yyyy, h:mm a")}
                         </p>
                       </div>
                     </div>
-                    <div className="flex items-center gap-3">
-                      {report.recordsProcessed && (
-                        <span className="text-sm text-muted-foreground">
-                          {report.recordsProcessed} records
-                        </span>
-                      )}
-                      <div className="flex items-center gap-1.5 capitalize text-sm">
+                    <div className="flex items-center gap-6">
+                      <Badge variant="secondary" className="bg-white text-[10px] font-black px-3">{report.recordsProcessed} RECORDS</Badge>
+                      <div className="flex items-center gap-1.5 font-black text-[10px] uppercase tracking-wider">
                         {getStatusIcon(report.status)}
                         {report.status}
                       </div>
@@ -273,5 +209,13 @@ export default function Reports() {
         </Card>
       </div>
     </DashboardLayout>
+  );
+}
+
+function Badge({ children, className, variant }: any) {
+  return (
+    <span className={`inline-flex items-center px-2 py-0.5 rounded border border-slate-200 ${className}`}>
+      {children}
+    </span>
   );
 }
