@@ -14,9 +14,12 @@ import { format } from "date-fns";
 interface CaseRow {
   premium: number | null;
   agent_id: string;
+  introducer_name: string | null;
+  leader_name: string | null;
   profiles: {
     full_name: string | null;
     rank: string | null;
+    email: string | null;
   } | null;
 }
 
@@ -27,10 +30,11 @@ interface LeaderboardEntry {
   cases: number;
   premium: number;
   category: string;
+  isCurrentUser: boolean;
 }
 
 const rankCategories = [
-  { id: "GAD", label: "GAD", description: "Group Agency Director" },
+  { id: "GAD", label: "GAD", description: "SuperAchiever Group Statistics" },
   { id: "AD", label: "AD", description: "Agency Director" },
   { id: "AGM", label: "AGM", description: "Agency Group Manager" },
   { id: "Agt", label: "Agent", description: "Insurance Agent" },
@@ -38,14 +42,10 @@ const rankCategories = [
 
 function getRankIcon(rank: number) {
   switch (rank) {
-    case 1:
-      return <Crown className="h-5 w-5 text-warning" />;
-    case 2:
-      return <Medal className="h-5 w-5 text-muted-foreground" />;
-    case 3:
-      return <Award className="h-5 w-5 text-warning" />;
-    default:
-      return <span className="w-5 h-5 flex items-center justify-center text-sm font-bold text-muted-foreground">{rank}</span>;
+    case 1: return <Crown className="h-5 w-5 text-warning" />;
+    case 2: return <Medal className="h-5 w-5 text-muted-foreground" />;
+    case 3: return <Award className="h-5 w-5 text-warning" />;
+    default: return <span className="w-5 h-5 flex items-center justify-center text-sm font-bold text-muted-foreground">{rank}</span>;
   }
 }
 
@@ -60,68 +60,81 @@ export default function Leaderboards() {
   const isAdmin = role === "admin" || user?.email === "admin@superachiever.com";
 
   useEffect(() => {
-    if (user) {
-      fetchRealLeaderboard();
-    }
+    if (user) fetchRealLeaderboard();
   }, [user]);
 
   const fetchRealLeaderboard = async () => {
     try {
       setLoadingData(true);
       
-      const { data, error } = await supabase
+      const { data: casesData, error: casesError } = await supabase
         .from('cases')
         .select(`
           premium,
           agent_id,
+          introducer_name,
+          leader_name,
           profiles (
             full_name,
-            rank
+            rank,
+            email
           )
-        `) as { data: CaseRow[] | null, error: any };
+        `);
 
-      if (error) throw error;
+      const { data: profilesData, error: profilesError } = await supabase
+        .from('profiles')
+        .select('agent_code, full_name, rank, email');
 
-      if (data) {
-        const tempMap: Record<string, LeaderboardEntry> = {};
+      if (casesError || profilesError) throw casesError || profilesError;
 
-        data.forEach((row: CaseRow) => {
-          const code = row.agent_id;
-          const profile = row.profiles;
-          const agentRank = profile?.rank || "Agt";
+      if (casesData && profilesData) {
+        const stats: Record<string, { premium: number; cases: number }> = {};
 
-          if (!tempMap[code]) {
-            tempMap[code] = { 
-              rank: 0, 
-              name: profile?.full_name || "Unknown Agent", 
-              agentCode: code, 
-              cases: 0, 
-              premium: 0,
-              category: agentRank 
-            };
-          }
-          tempMap[code].cases += 1;
-          tempMap[code].premium += Number(row.premium || 0);
+        // HIERARCHY ROLL-UP LOGIC
+        casesData.forEach((c: any) => {
+          const amt = Number(c.premium || 0);
+          // Credit the Agent, Introducer, and Leader
+          const agentsToCredit = [c.agent_id, c.introducer_name, c.leader_name].filter(Boolean);
+          
+          agentsToCredit.forEach(codeOrName => {
+            if (!stats[codeOrName]) stats[codeOrName] = { premium: 0, cases: 0 };
+            stats[codeOrName].premium += amt;
+            stats[codeOrName].cases += 1;
+          });
         });
 
-        const categories: Record<string, LeaderboardEntry[]> = { 
-          GAD: [], AD: [], AGM: [], Agt: [] 
-        };
+        const categories: Record<string, LeaderboardEntry[]> = { GAD: [], AD: [], AGM: [], Agt: [] };
         
-        Object.values(tempMap).forEach((entry) => {
-          if (categories[entry.category]) {
-            categories[entry.category].push(entry);
-          } else {
+        profilesData.forEach((p: any) => {
+          // Look up stats by agent_code (individual) or full_name (hierarchy)
+          const pStats = stats[p.agent_code] || stats[p.full_name] || { premium: 0, cases: 0 };
+          const entry: LeaderboardEntry = {
+            rank: 0,
+            name: p.full_name || "Unknown",
+            agentCode: p.agent_code || "",
+            cases: pStats.cases,
+            premium: pStats.premium,
+            category: p.rank || "Agt",
+            isCurrentUser: p.email === user?.email
+          };
+
+          // GAD TAB: Always includes everyone for total group statistics
+          categories["GAD"].push(entry);
+
+          // Other Tabs: Filtered by specific rank
+          const dbRank = String(p.rank).toUpperCase();
+          if (dbRank.includes("AGENCY DIRECTOR")) {
+            categories["AD"].push(entry);
+          } else if (dbRank.includes("AGENCY GROWTH MANAGER")) {
+            categories["AGM"].push(entry);
+          } else if (!dbRank.includes("GROUP AGENCY DIRECTOR")) {
             categories["Agt"].push(entry);
           }
         });
 
         Object.keys(categories).forEach(cat => {
           categories[cat].sort((a, b) => b.premium - a.premium);
-          categories[cat] = categories[cat].map((item, index) => ({
-            ...item,
-            rank: index + 1
-          }));
+          categories[cat] = categories[cat].map((item, index) => ({ ...item, rank: index + 1 }));
         });
 
         setLeaderboardData(categories);
@@ -133,43 +146,23 @@ export default function Leaderboards() {
     }
   };
 
-  // CSV Export Logic
   const handleExportCSV = () => {
     const currentData = leaderboardData[activeCategory] || [];
-    const headers = ["Rank", "Name", "Agent Code", "Total Cases", "Total Premium (RM)"];
-    
+    const headers = ["Rank", "Name", "Agent Code", "Total Cases", "Total AFYC"];
     const csvContent = [
       headers.join(","),
-      ...currentData.map(entry => [
-        entry.rank,
-        `"${entry.name}"`,
-        entry.agentCode,
-        entry.cases,
-        entry.premium.toFixed(2)
-      ].join(","))
+      ...currentData.map(entry => [entry.rank, `"${entry.name}"`, entry.agentCode, entry.cases, entry.premium.toFixed(2)].join(","))
     ].join("\n");
-
     const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
-    link.setAttribute("href", url);
-    link.setAttribute("download", `${activeCategory}_Leaderboard_${format(new Date(), "yyyyMMdd")}.csv`);
-    document.body.appendChild(link);
+    link.href = url;
+    link.download = `${activeCategory}_Leaderboard_${format(new Date(), "yyyyMMdd")}.csv`;
     link.click();
-    document.body.removeChild(link);
   };
 
-  if (isLoading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-background">
-        <Loader2 className="h-8 w-8 animate-spin text-primary" />
-      </div>
-    );
-  }
-
-  if (!user) {
-    return <Navigate to="/auth" replace />;
-  }
+  if (isLoading) return <div className="min-h-screen flex items-center justify-center bg-background"><Loader2 className="h-8 w-8 animate-spin text-primary" /></div>;
+  if (!user) return <Navigate to="/auth" replace />;
 
   const currentData = leaderboardData[activeCategory] || [];
 
@@ -182,12 +175,8 @@ export default function Leaderboards() {
               <Trophy className="h-7 w-7 text-warning" />
               Live Leaderboards
             </h1>
-            <p className="text-muted-foreground">
-              Real-time rankings across all rank categories
-            </p>
+            <p className="text-muted-foreground">Real-time rankings across all rank categories</p>
           </div>
-          
-          {/* Admin Export Button */}
           {isAdmin && (
             <Button onClick={handleExportCSV} className="flex gap-2 shadow-md">
               <Download className="h-4 w-4" /> Export {activeCategory} Rankings
@@ -216,7 +205,6 @@ export default function Leaderboards() {
                 <div className="text-center py-20 bg-muted/20 rounded-xl border-2 border-dashed">
                   <Trophy className="h-12 w-12 mx-auto mb-4 opacity-20" />
                   <p className="text-lg font-medium">No records found for this category</p>
-                  <p className="text-sm text-muted-foreground">Sync more data to see rankings</p>
                 </div>
               ) : (
                 <div className="grid gap-6 lg:grid-cols-3">
@@ -233,10 +221,10 @@ export default function Leaderboards() {
                                 {currentData[1].name.charAt(0)}
                               </div>
                               <Medal className="h-6 w-6 text-slate-400 mb-1" />
-                              <p className="font-semibold text-sm">{currentData[1].name}</p>
-                              <p className="text-[10px] uppercase tracking-wider text-muted-foreground mb-2">{currentData[1].agentCode}</p>
+                              <p className="font-semibold text-sm truncate max-w-[120px]">{currentData[1].name}</p>
+                              <p className="text-[10px] font-bold text-slate-400 mb-2">{currentData[1].agentCode}</p>
                               <div className="bg-white/80 backdrop-blur px-3 py-1 rounded-full text-xs font-bold border">
-                                RM {currentData[1].premium.toLocaleString()}
+                                {currentData[1].premium.toLocaleString()} AFYC
                               </div>
                             </div>
                           )}
@@ -247,10 +235,10 @@ export default function Leaderboards() {
                                 {currentData[0].name.charAt(0)}
                               </div>
                               <Crown className="h-10 w-10 text-warning mb-1" />
-                              <p className="font-bold text-lg">{currentData[0].name}</p>
-                              <p className="text-xs uppercase tracking-wider text-muted-foreground mb-3">{currentData[0].agentCode}</p>
+                              <p className="font-bold text-lg truncate max-w-[150px]">{currentData[0].name}</p>
+                              <p className="text-xs font-bold text-slate-400 mb-3">{currentData[0].agentCode}</p>
                               <div className="bg-primary px-4 py-2 rounded-xl text-sm font-bold text-white shadow-lg">
-                                RM {currentData[0].premium.toLocaleString()}
+                                {currentData[0].premium.toLocaleString()} AFYC
                               </div>
                             </div>
                           )}
@@ -261,10 +249,10 @@ export default function Leaderboards() {
                                 {currentData[2].name.charAt(0)}
                               </div>
                               <Award className="h-6 w-6 text-orange-400 mb-1" />
-                              <p className="font-semibold text-sm">{currentData[2].name}</p>
-                              <p className="text-[10px] uppercase tracking-wider text-muted-foreground mb-2">{currentData[2].agentCode}</p>
+                              <p className="font-semibold text-sm truncate max-w-[120px]">{currentData[2].name}</p>
+                              <p className="text-[10px] font-bold text-slate-400 mb-2">{currentData[2].agentCode}</p>
                               <div className="bg-white/80 backdrop-blur px-3 py-1 rounded-full text-xs font-bold border">
-                                RM {currentData[2].premium.toLocaleString()}
+                                {currentData[2].premium.toLocaleString()} AFYC
                               </div>
                             </div>
                           )}
@@ -273,37 +261,40 @@ export default function Leaderboards() {
                     </Card>
                   </div>
 
-                  <Card className="lg:col-span-3 shadow-soft">
+                  <Card className="lg:col-span-3 shadow-soft border-none">
                     <CardHeader>
                       <CardTitle className="text-lg">Full Leaderboard</CardTitle>
                     </CardHeader>
-                    <CardContent>
-                      <div className="space-y-3">
-                        {currentData.map((entry) => (
-                          <div
-                            key={entry.agentCode}
-                            className={cn(
-                              "flex items-center gap-4 rounded-xl border p-4 transition-all hover:translate-x-1",
-                              entry.rank <= 3 ? "bg-primary/[0.02] border-primary/10" : "bg-card"
-                            )}
-                          >
-                            <div className="flex items-center justify-center w-8">
-                              {getRankIcon(entry.rank)}
-                            </div>
-                            <div className="h-10 w-10 rounded-full bg-muted flex items-center justify-center font-bold text-muted-foreground">
-                              {entry.name.charAt(0)}
-                            </div>
-                            <div className="flex-1 min-w-0">
-                              <p className="font-semibold truncate">{entry.name}</p>
-                              <p className="text-xs text-muted-foreground font-mono">{entry.agentCode}</p>
-                            </div>
-                            <div className="text-right">
-                              <p className="text-sm font-bold">RM {entry.premium.toLocaleString()}</p>
-                              <p className="text-xs text-muted-foreground">{entry.cases} cases</p>
-                            </div>
+                    <CardContent className="space-y-3">
+                      {currentData.map((entry) => (
+                        <div
+                          key={entry.agentCode}
+                          className={cn(
+                            "flex items-center gap-4 rounded-xl border p-4 transition-all hover:translate-x-1",
+                            entry.isCurrentUser ? "bg-primary/10 border-primary ring-1 ring-primary/20" : "bg-card border-slate-100",
+                            entry.rank <= 3 && !entry.isCurrentUser && "bg-primary/[0.02] border-primary/10"
+                          )}
+                        >
+                          <div className="flex items-center justify-center w-8 italic text-slate-300 font-black text-sm">
+                            {entry.rank}.
                           </div>
-                        ))}
-                      </div>
+                          <div className="h-10 w-10 rounded-full bg-muted flex items-center justify-center font-bold text-muted-foreground">
+                            {entry.name.charAt(0)}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <p className={cn("font-bold truncate text-sm uppercase", entry.isCurrentUser && "text-primary")}>
+                              {entry.name} {entry.isCurrentUser && "(You)"}
+                            </p>
+                            <p className="text-[10px] text-muted-foreground font-bold uppercase tracking-widest">{entry.agentCode}</p>
+                          </div>
+                          <div className="text-right">
+                            <p className="text-sm font-black">
+                              {entry.premium.toLocaleString()} <span className="text-[10px] text-primary">AFYC</span>
+                            </p>
+                            <p className="text-[10px] text-muted-foreground font-bold uppercase">{entry.cases} cases</p>
+                          </div>
+                        </div>
+                      ))}
                     </CardContent>
                   </Card>
                 </div>
