@@ -120,47 +120,77 @@ export default function Cases() {
   }, [cases, filters]);
 
   const fetchCases = async () => {
-    try {
-      setLoading(true);
-      let query = supabase
+  try {
+    setLoading(true);
+    
+    // First, get the total count
+    const { count: totalCount, error: countError } = await supabase
+      .from("cases")
+      .select('*', { count: 'exact', head: true });
+
+    if (countError) throw countError;
+    console.log("📊 Total cases in database:", totalCount);
+
+    // Fetch all cases using pagination
+    let allCases: any[] = [];
+    let page = 0;
+    const pageSize = 1000;
+    let hasMore = true;
+
+    while (hasMore) {
+      const { data, error } = await supabase
         .from("cases")
         .select("*")
-        .order("submission_date_timestamp", { ascending: false }); // Using timestamp column
+        .order("submission_date_timestamp", { ascending: false })
+        .range(page * pageSize, (page + 1) * pageSize - 1);
 
-      // If not admin, filter by agent_code
-      if (!isAdmin) {
-        const { data: profile } = await supabase
-          .from("profiles")
-          .select("agent_code")
-          .eq("id", user?.id)
-          .maybeSingle();
-
-        if (profile?.agent_code) {
-          query = query.eq("agent_id", profile.agent_code);
-        } else {
-          setCases([]);
-          setFilteredCases([]);
-          setLoading(false);
-          return;
-        }
-      }
-
-      const { data, error } = await query;
       if (error) throw error;
       
-      // Log first few dates for debugging
-      console.log("Sample dates from DB:", data?.slice(0, 3).map(c => ({
-        submission: c.submission_date_timestamp,
-        enforce: c.enforce_date
-      })));
+      if (data && data.length > 0) {
+        allCases = [...allCases, ...data];
+        page++;
+        console.log(`📊 Fetched page ${page}: ${data.length} cases (total so far: ${allCases.length})`);
+      }
       
-      setCases(data || []);
-    } catch (error) {
-      console.error("Error fetching cases:", error);
-    } finally {
-      setLoading(false);
+      if (!data || data.length < pageSize) {
+        hasMore = false;
+      }
     }
-  };
+
+    console.log("📊 TOTAL cases fetched:", allCases.length);
+
+    // Filter based on user role
+    let finalCases = allCases;
+    
+    if (!isAdmin) {
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('agent_code')
+        .eq('id', user?.id)
+        .maybeSingle();
+
+      if (profile?.agent_code) {
+        finalCases = allCases.filter(c => c.agent_id === profile.agent_code);
+      } else {
+        setCases([]);
+        setFilteredCases([]);
+        setLoading(false);
+        return;
+      }
+    }
+
+    // Generate alerts from pending cases
+    const finalAlerts = allCases.filter(c => c.status === "pending").slice(0, 5);
+    
+    setCases(finalCases);
+    setAlerts(finalAlerts);
+    
+  } catch (error) {
+    console.error("Error fetching cases:", error);
+  } finally {
+    setLoading(false);
+  }
+};
 
   const applyFilters = () => {
     let filtered = [...cases];

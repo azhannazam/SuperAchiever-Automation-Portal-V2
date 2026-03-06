@@ -75,41 +75,63 @@ export default function Dashboard() {
   }, [user, role]);
 
   const fetchDashboardData = async () => {
-    try {
-      setLoadingData(true);
-      let finalCases: CaseData[] = [];
-      let finalAlerts: any[] = [];
+  try {
+    setLoadingData(true);
+    
+    // Fetch all cases using pagination
+    let allCases: any[] = [];
+    let page = 0;
+    const pageSize = 1000;
+    let hasMore = true;
 
-      const { data: allCases, error: casesError } = await supabase
+    while (hasMore) {
+      const { data, error } = await supabase
         .from("cases")
         .select("*")
-        .order("submission_date_timestamp", { ascending: false }); // Using timestamp column
+        .order("submission_date_timestamp", { ascending: false })
+        .range(page * pageSize, (page + 1) * pageSize - 1);
 
-      if (casesError) throw casesError;
-
-      if (isAdmin) {
-        finalCases = allCases || [];
-        finalAlerts = (allCases || []).filter(c => c.status === "pending").slice(0, 5);
-      } else {
-        const { data: profile } = await supabase
-          .from('profiles')
-          .select('agent_code')
-          .eq('id', user?.id)
-          .maybeSingle();
-
-        if (profile?.agent_code) {
-          finalCases = (allCases || []).filter(c => c.agent_id === profile.agent_code);
-        }
+      if (error) throw error;
+      
+      if (data && data.length > 0) {
+        allCases = [...allCases, ...data];
+        page++;
+        console.log(`📊 Dashboard fetched page ${page}: ${data.length} cases (total so far: ${allCases.length})`);
       }
-
-      setCases(finalCases);
-      setAlerts(finalAlerts);
-    } catch (error) {
-      console.error(error);
-    } finally {
-      setLoadingData(false);
+      
+      if (!data || data.length < pageSize) {
+        hasMore = false;
+      }
     }
-  };
+
+    console.log("📊 Dashboard TOTAL cases fetched:", allCases.length);
+
+    let finalCases: CaseData[] = [];
+    let finalAlerts: any[] = [];
+
+    if (isAdmin) {
+      finalCases = allCases || [];
+      finalAlerts = (allCases || []).filter(c => c.status === "pending").slice(0, 5);
+    } else {
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('agent_code')
+        .eq('id', user?.id)
+        .maybeSingle();
+
+      if (profile?.agent_code) {
+        finalCases = (allCases || []).filter(c => c.agent_id === profile.agent_code);
+      }
+    }
+
+    setCases(finalCases);
+    setAlerts(finalAlerts);
+  } catch (error) {
+    console.error(error);
+  } finally {
+    setLoadingData(false);
+  }
+};
 
   if (isLoading) return <div className="min-h-screen flex items-center justify-center"><Loader2 className="animate-spin text-primary" /></div>;
   if (!user) return <Navigate to="/auth" replace />;

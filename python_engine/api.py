@@ -6,15 +6,15 @@ from fastapi import Request
 import uvicorn
 import os
 import shutil
-import aiofiles  # Add this for async file handling
+import aiofiles
 from datetime import datetime
 import json
 from pathlib import Path
 import asyncio
-import gc  # Garbage collection
+import gc
 
 # Import your existing scripts
-from excel_bot import process_report_316, process_report_316_large_file  # Add large file handler
+from excel_bot import process_report_316, process_report_316_large_file
 from import_master import import_agent_master
 from database import supabase
 
@@ -82,6 +82,7 @@ def format_file_size(size_bytes):
 @app.options("/api/download-latest/{filename}")
 @app.options("/api/processing-status/{job_id}")
 @app.options("/api/recent-cases")
+@app.options("/api/total-production")
 async def options_handler(request: Request):
     """Handle OPTIONS requests for CORS preflight"""
     return JSONResponse(
@@ -105,6 +106,7 @@ async def root():
         "endpoints": [
             "/api/health",
             "/api/stats",
+            "/api/total-production",
             "/api/process-report-316",
             "/api/import-agent-master",
             "/api/history",
@@ -129,6 +131,52 @@ async def health_check():
             "status": "degraded",
             "supabase": f"error: {str(e)}",
             "timestamp": datetime.now().isoformat()
+        }
+
+@app.get("/api/total-production")
+async def get_total_production():
+    """Get total production from ALL cases - matches dashboard exactly"""
+    try:
+        # First, get total count
+        count_result = supabase.table("cases").select("*", count="exact").execute()
+        total_count = count_result.count if hasattr(count_result, 'count') else 0
+        
+        # Fetch ALL cases using pagination
+        all_premiums = []
+        page = 0
+        page_size = 1000
+        has_more = True
+
+        while has_more:
+            result = supabase.table("cases") \
+                .select("premium") \
+                .range(page * page_size, (page + 1) * page_size - 1) \
+                .execute()
+            
+            if result.data and len(result.data) > 0:
+                all_premiums.extend(result.data)
+                page += 1
+                print(f"📊 API fetched page {page}: {len(result.data)} records (total so far: {len(all_premiums)})")
+            
+            if not result.data or len(result.data) < page_size:
+                has_more = False
+
+        print(f"📊 API total-production: fetched {len(all_premiums)} cases")
+        
+        total = sum(item['premium'] or 0 for item in all_premiums)
+        count = len(all_premiums)
+        
+        print(f"📊 Total production from API: {total} across {count} cases")
+        
+        return {
+            "total": total,
+            "count": count
+        }
+    except Exception as e:
+        print(f"❌ Error getting total production: {e}")
+        return {
+            "total": 0,
+            "count": 0
         }
 
 @app.get("/api/stats")
@@ -493,5 +541,5 @@ if __name__ == "__main__":
         "api:app",
         host="0.0.0.0",
         port=8000,
-        reload=True,
+        reload=True
     )
