@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
-import { Navigate } from "react-router-dom";
+import { Navigate, useNavigate } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 import DashboardLayout from "@/components/layout/DashboardLayout";
 import { StatCard } from "@/components/ui/stat-card";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 import {
   Table,
   TableBody,
@@ -22,6 +23,7 @@ import {
   Trophy,
   TrendingUp,
   Loader2,
+  ArrowRight,
 } from "lucide-react";
 import { format, parseISO, isValid } from "date-fns";
 import { Badge } from "@/components/ui/badge";
@@ -33,7 +35,8 @@ interface CaseData {
   product_type: string | null;
   premium: number | null;
   status: "approved" | "pending" | "error";
-  submission_date_timestamp: string;  // Changed from submission_date
+  remark: string | null;
+  submission_date_timestamp: string;
   enforce_date: string | null;
   agent_id: string;
 }
@@ -64,6 +67,7 @@ const formatAFYC = (value: number | null): string => {
 
 export default function Dashboard() {
   const { user, role, isLoading } = useAuth();
+  const navigate = useNavigate();
   const [cases, setCases] = useState<CaseData[]>([]);
   const [alerts, setAlerts] = useState<any[]>([]);
   const [loadingData, setLoadingData] = useState(true);
@@ -75,63 +79,64 @@ export default function Dashboard() {
   }, [user, role]);
 
   const fetchDashboardData = async () => {
-  try {
-    setLoadingData(true);
-    
-    // Fetch all cases using pagination
-    let allCases: any[] = [];
-    let page = 0;
-    const pageSize = 1000;
-    let hasMore = true;
-
-    while (hasMore) {
-      const { data, error } = await supabase
-        .from("cases")
-        .select("*")
-        .order("submission_date_timestamp", { ascending: false })
-        .range(page * pageSize, (page + 1) * pageSize - 1);
-
-      if (error) throw error;
+    try {
+      setLoadingData(true);
       
-      if (data && data.length > 0) {
-        allCases = [...allCases, ...data];
-        page++;
-        console.log(`📊 Dashboard fetched page ${page}: ${data.length} cases (total so far: ${allCases.length})`);
+      // Fetch all cases using pagination
+      let allCases: any[] = [];
+      let page = 0;
+      const pageSize = 1000;
+      let hasMore = true;
+
+      while (hasMore) {
+        const { data, error } = await supabase
+          .from("cases")
+          .select("*")
+          .order("submission_date_timestamp", { ascending: false })
+          .range(page * pageSize, (page + 1) * pageSize - 1);
+
+        if (error) throw error;
+        
+        if (data && data.length > 0) {
+          allCases = [...allCases, ...data];
+          page++;
+          console.log(`📊 Dashboard fetched page ${page}: ${data.length} cases (total so far: ${allCases.length})`);
+        }
+        
+        if (!data || data.length < pageSize) {
+          hasMore = false;
+        }
       }
-      
-      if (!data || data.length < pageSize) {
-        hasMore = false;
+
+      console.log("📊 Dashboard TOTAL cases fetched:", allCases.length);
+
+      let finalCases: CaseData[] = [];
+      let finalAlerts: any[] = [];
+
+      if (isAdmin) {
+        finalCases = allCases || [];
+        finalAlerts = (allCases || []).filter(c => c.status === "pending").slice(0, 5);
+      } else {
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('agent_code')
+          .eq('id', user?.id)
+          .maybeSingle();
+
+        if (profile?.agent_code) {
+          finalCases = (allCases || []).filter(c => c.agent_id === profile.agent_code);
+          finalAlerts = finalCases.filter(c => c.status === "pending").slice(0, 5);
+        }
       }
+
+      setCases(finalCases);
+      setAlerts(finalAlerts);
+    } catch (error) {
+      console.error(error);
+    } finally {
+      setLoadingData(false);
     }
-
-    console.log("📊 Dashboard TOTAL cases fetched:", allCases.length);
-
-    let finalCases: CaseData[] = [];
-    let finalAlerts: any[] = [];
-
-    if (isAdmin) {
-      finalCases = allCases || [];
-      finalAlerts = (allCases || []).filter(c => c.status === "pending").slice(0, 5);
-    } else {
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('agent_code')
-        .eq('id', user?.id)
-        .maybeSingle();
-
-      if (profile?.agent_code) {
-        finalCases = (allCases || []).filter(c => c.agent_id === profile.agent_code);
-      }
-    }
-
-    setCases(finalCases);
-    setAlerts(finalAlerts);
-  } catch (error) {
-    console.error(error);
-  } finally {
-    setLoadingData(false);
-  }
-};
+  };
 
   if (isLoading) return <div className="min-h-screen flex items-center justify-center"><Loader2 className="animate-spin text-primary" /></div>;
   if (!user) return <Navigate to="/auth" replace />;
@@ -153,38 +158,39 @@ export default function Dashboard() {
           <p className="text-muted-foreground text-sm">Global performance and agency roll-up</p>
         </header>
 
-        {/* Stat Cards - Updated to AFYC format */}
+        {/* Stat Cards */}
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-          <StatCard 
-            title="Total Submissions" 
-            value={cases.length} 
-            subtitle={isAdmin ? "Total Company Cases" : "Your lifetime cases"} 
-            icon={<FileText className="h-6 w-6" />} 
+          <StatCard
+            title="Total Submissions"
+            value={cases.length}
+            subtitle={isAdmin ? "Total Company Cases" : "Your lifetime cases"}
+            icon={<FileText className="h-6 w-6" />}
           />
-          <StatCard 
-            title="Approved (Enforced)" 
-            value={formatAFYC(approvedAFYC)} 
-            subtitle={`${approvedCases.length} Enforced Cases`} 
-            icon={<CheckCircle2 className="h-6 w-6" />} 
-            variant="success" 
+          <StatCard
+            title="Approved (Enforced)"
+            value={formatAFYC(approvedAFYC)}
+            subtitle={`${approvedCases.length} Enforced Cases`}
+            icon={<CheckCircle2 className="h-6 w-6" />}
+            variant="success"
           />
-          <StatCard 
-            title="Pending Sync" 
-            value={formatAFYC(pendingAFYC)} 
-            subtitle={`${pendingCases.length} Awaiting Action`} 
-            icon={<Clock className="h-6 w-6" />} 
-            variant="warning" 
+          <StatCard
+            title="Pending Sync"
+            value={formatAFYC(pendingAFYC)}
+            subtitle={`${pendingCases.length} Awaiting Action`}
+            icon={<Clock className="h-6 w-6" />}
+            variant="warning"
           />
-          <StatCard 
-            title="Total Production" 
-            value={formatAFYC(totalAFYC)} 
-            subtitle="Current AFYC Total" 
-            icon={<TrendingUp className="h-6 w-6" />} 
-            variant="primary" 
+          <StatCard
+            title="Total Production"
+            value={formatAFYC(totalAFYC)}
+            subtitle="Current AFYC Total"
+            icon={<TrendingUp className="h-6 w-6" />}
+            variant="primary"
           />
         </div>
 
         <div className="grid gap-6 lg:grid-cols-3">
+          {/* Recent Cases Table */}
           <Card className="lg:col-span-2 shadow-soft border-none bg-white">
             <CardHeader>
               <CardTitle className="text-lg font-bold">Recent Case Activities</CardTitle>
@@ -240,35 +246,63 @@ export default function Dashboard() {
             </CardContent>
           </Card>
 
+          {/* Right Sidebar - Updated Notifications */}
           <div className="space-y-6">
+            {/* Updated Priority Notifications Card */}
             <Card className="shadow-soft border-none bg-white">
-              <CardHeader className="flex flex-row items-center gap-2">
-                <Bell className="h-5 w-5 text-warning" />
-                <CardTitle className="text-lg font-bold text-slate-800">
-                  Priority Notifications
-                </CardTitle>
+              <CardHeader className="flex flex-row items-center justify-between pb-2">
+                <div className="flex items-center gap-2">
+                  <Bell className="h-5 w-5 text-warning" />
+                  <CardTitle className="text-lg font-bold text-slate-800">
+                    Priority
+                  </CardTitle>
+                </div>
+                {pendingCases.length > 0 && (
+                  <Button 
+                    variant="ghost" 
+                    size="sm" 
+                    onClick={() => navigate("/dashboard/alerts")} // Changed from "/dashboard/alerts" to "/alerts"
+                    className="text-[10px] font-black uppercase text-primary hover:bg-primary/5 flex items-center gap-1"
+                  >
+                    View All ({pendingCases.length}) <ArrowRight className="h-3 w-3" />
+                  </Button>
+                )}
               </CardHeader>
               <CardContent className="space-y-3">
                 {alerts.length === 0 ? (
-                  <p className="text-xs text-center py-4 text-muted-foreground font-medium">
-                    No urgent updates
-                  </p>
+                  <div className="text-center py-6">
+                    <CheckCircle2 className="h-8 w-8 mx-auto mb-2 text-green-500 opacity-20" />
+                    <p className="text-xs text-muted-foreground font-medium">All cases cleared</p>
+                  </div>
                 ) : (
-                  alerts.map((a) => (
-                    <div key={a.id} className="p-3 rounded-xl border border-slate-50 bg-slate-50/50">
-                      <p className="text-xs font-black text-slate-800">
-                        {isAdmin ? `Policy: ${a.policy_number}` : a.message}
-                      </p>
-                      <p className="text-[10px] font-bold text-slate-400 mt-1 uppercase tracking-tighter">
-                        {isAdmin ? `Agent ID: ${a.agent_id}` : formatDisplayDate(a.created_at)}
-                      </p>
-                    </div>
-                  ))
+                  <>
+                    {alerts.map((a) => (
+                      <div key={a.id} className="p-3 rounded-xl border border-slate-50 bg-slate-50/50 hover:border-warning/30 transition-colors cursor-pointer" onClick={() => navigate("/dashboard/alerts")}>
+                        <div className="flex justify-between items-start">
+                          <p className="text-xs font-black text-slate-800 uppercase tracking-tight">
+                            {a.policy_number}
+                          </p>
+                          <Badge variant="outline" className="text-[8px] font-bold uppercase py-0 px-1 border-slate-200 text-slate-400">
+                            {a.agent_id}
+                          </Badge>
+                        </div>
+                        <p className="text-[10px] font-bold text-slate-600 mt-1 truncate">
+                          {a.client_name}
+                        </p>
+                        <p className="text-[10px] font-bold text-red-500 mt-1 uppercase italic flex items-center gap-1">
+                          <Clock className="h-3 w-3" /> {a.remark || "Action Required"}
+                        </p>
+                      </div>
+                    ))}
+                    <p className="text-[9px] text-center text-slate-400 font-bold uppercase tracking-widest pt-2">
+                      Sorted by newest submission
+                    </p>
+                  </>
                 )}
               </CardContent>
             </Card>
 
-            {/* Contest Progress */}
+            {/* Contest Progress Card (Unchanged) */}
             <Card className="shadow-soft border-none bg-[#0F172A] text-white">
               <CardHeader className="flex flex-row items-center gap-2">
                 <Trophy className="h-5 w-5 text-warning" />

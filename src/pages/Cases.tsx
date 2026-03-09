@@ -23,8 +23,9 @@ import {
   Filter,
   Calendar,
   X,
+  ChevronDown,
 } from "lucide-react";
-import { format, parseISO, isValid } from "date-fns";
+import { format, parseISO, isValid, subDays, subMonths, startOfToday, endOfToday, startOfMonth, endOfMonth } from "date-fns";
 import {
   Select,
   SelectContent,
@@ -39,6 +40,14 @@ import {
 } from "@/components/ui/popover";
 import { Calendar as CalendarComponent } from "@/components/ui/calendar";
 import { Badge } from "@/components/ui/badge";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 interface Case {
   id: string;
@@ -48,7 +57,7 @@ interface Case {
   product_type: string;
   premium: number;
   status: string;
-  submission_date_timestamp: string;  // Changed from submission_date
+  submission_date_timestamp: string;
   enforce_date: string | null;
 }
 
@@ -59,6 +68,7 @@ interface Filters {
   };
   status: string;
   search: string;
+  datePreset?: string;
 }
 
 // Helper function to safely parse dates
@@ -66,11 +76,9 @@ const parseDate = (dateString: string | null): Date | null => {
   if (!dateString) return null;
   
   try {
-    // Try parsing as ISO string first
     const date = parseISO(dateString);
     if (isValid(date)) return date;
     
-    // Try parsing as timestamp
     const timestamp = Date.parse(dateString);
     if (!isNaN(timestamp)) return new Date(timestamp);
     
@@ -87,12 +95,30 @@ const formatDisplayDate = (dateString: string | null): string => {
   const date = parseDate(dateString);
   if (!date) return "Invalid date";
   
-  // Check if it's the epoch (1970-01-01)
   if (date.getFullYear() === 1970 && date.getMonth() === 0 && date.getDate() === 1) {
     return "Date not available";
   }
   
   return format(date, "dd MMM yyyy");
+};
+
+// Date format for inputs
+const formatDateInput = (date: Date | null): string => {
+  if (!date) return "";
+  return format(date, "dd.MM.yyyy");
+};
+
+const parseDateInput = (dateString: string): Date | null => {
+  if (!dateString) return null;
+  const parts = dateString.split('.');
+  if (parts.length === 3) {
+    const day = parseInt(parts[0], 10);
+    const month = parseInt(parts[1], 10) - 1;
+    const year = parseInt(parts[2], 10);
+    const date = new Date(year, month, day);
+    return isValid(date) ? date : null;
+  }
+  return null;
 };
 
 export default function Cases() {
@@ -104,8 +130,15 @@ export default function Cases() {
     dateRange: { from: null, to: null },
     status: "all",
     search: "",
+    datePreset: "any"
   });
   const [showFilters, setShowFilters] = useState(false);
+  const [dateInputs, setDateInputs] = useState({
+    from: "",
+    to: ""
+  });
+  const [fromCalendarOpen, setFromCalendarOpen] = useState(false);
+  const [toCalendarOpen, setToCalendarOpen] = useState(false);
 
   const isAdmin = role === "admin" || user?.email === "admin@superachiever.com";
   const statusOptions = ["all", "approved", "pending", "rejected"];
@@ -114,83 +147,89 @@ export default function Cases() {
     if (user) fetchCases();
   }, [user, role]);
 
-  // Apply filters whenever cases or filters change
   useEffect(() => {
     applyFilters();
   }, [cases, filters]);
 
+  useEffect(() => {
+    if (filters.dateRange.from) {
+      setDateInputs(prev => ({ ...prev, from: formatDateInput(filters.dateRange.from) }));
+    } else {
+      setDateInputs(prev => ({ ...prev, from: "" }));
+    }
+    
+    if (filters.dateRange.to) {
+      setDateInputs(prev => ({ ...prev, to: formatDateInput(filters.dateRange.to) }));
+    } else {
+      setDateInputs(prev => ({ ...prev, to: "" }));
+    }
+  }, [filters.dateRange]);
+
   const fetchCases = async () => {
-  try {
-    setLoading(true);
-    
-    // First, get the total count
-    const { count: totalCount, error: countError } = await supabase
-      .from("cases")
-      .select('*', { count: 'exact', head: true });
-
-    if (countError) throw countError;
-    console.log("📊 Total cases in database:", totalCount);
-
-    // Fetch all cases using pagination
-    let allCases: any[] = [];
-    let page = 0;
-    const pageSize = 1000;
-    let hasMore = true;
-
-    while (hasMore) {
-      const { data, error } = await supabase
+    try {
+      setLoading(true);
+      
+      const { count: totalCount, error: countError } = await supabase
         .from("cases")
-        .select("*")
-        .order("submission_date_timestamp", { ascending: false })
-        .range(page * pageSize, (page + 1) * pageSize - 1);
+        .select('*', { count: 'exact', head: true });
 
-      if (error) throw error;
+      if (countError) throw countError;
+      console.log("📊 Total cases in database:", totalCount);
+
+      let allCases: any[] = [];
+      let page = 0;
+      const pageSize = 1000;
+      let hasMore = true;
+
+      while (hasMore) {
+        const { data, error } = await supabase
+          .from("cases")
+          .select("*")
+          .order("submission_date_timestamp", { ascending: false })
+          .range(page * pageSize, (page + 1) * pageSize - 1);
+
+        if (error) throw error;
+        
+        if (data && data.length > 0) {
+          allCases = [...allCases, ...data];
+          page++;
+          console.log(`📊 Fetched page ${page}: ${data.length} cases (total so far: ${allCases.length})`);
+        }
+        
+        if (!data || data.length < pageSize) {
+          hasMore = false;
+        }
+      }
+
+      console.log("📊 TOTAL cases fetched:", allCases.length);
+
+      let finalCases = allCases;
       
-      if (data && data.length > 0) {
-        allCases = [...allCases, ...data];
-        page++;
-        console.log(`📊 Fetched page ${page}: ${data.length} cases (total so far: ${allCases.length})`);
+      if (!isAdmin) {
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('agent_code')
+          .eq('id', user?.id)
+          .maybeSingle();
+
+        if (profile?.agent_code) {
+          finalCases = allCases.filter(c => c.agent_id === profile.agent_code);
+        } else {
+          setCases([]);
+          setFilteredCases([]);
+          setLoading(false);
+          return;
+        }
       }
+
+      setCases(finalCases);
       
-      if (!data || data.length < pageSize) {
-        hasMore = false;
-      }
+    } catch (error) {
+      console.error("Error fetching cases:", error);
+    } finally {
+      setLoading(false);
     }
-
-    console.log("📊 TOTAL cases fetched:", allCases.length);
-
-    // Filter based on user role
-    let finalCases = allCases;
-    
-    if (!isAdmin) {
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('agent_code')
-        .eq('id', user?.id)
-        .maybeSingle();
-
-      if (profile?.agent_code) {
-        finalCases = allCases.filter(c => c.agent_id === profile.agent_code);
-      } else {
-        setCases([]);
-        setFilteredCases([]);
-        setLoading(false);
-        return;
-      }
-    }
-
-    // Generate alerts from pending cases
-    const finalAlerts = allCases.filter(c => c.status === "pending").slice(0, 5);
-    
-    setCases(finalCases);
-    setAlerts(finalAlerts);
-    
-  } catch (error) {
-    console.error("Error fetching cases:", error);
-  } finally {
-    setLoading(false);
-  }
-};
+  };
 
   const applyFilters = () => {
     let filtered = [...cases];
@@ -211,7 +250,7 @@ export default function Cases() {
       filtered = filtered.filter((c) => c.status === filters.status);
     }
 
-    // Date range filter using submission_date_timestamp
+    // Date range filter
     if (filters.dateRange.from) {
       filtered = filtered.filter((c) => {
         const caseDate = parseDate(c.submission_date_timestamp);
@@ -222,7 +261,6 @@ export default function Cases() {
     if (filters.dateRange.to) {
       filtered = filtered.filter((c) => {
         const caseDate = parseDate(c.submission_date_timestamp);
-        // Add one day to include the end date
         const endDate = new Date(filters.dateRange.to!);
         endDate.setDate(endDate.getDate() + 1);
         return caseDate ? caseDate <= endDate : false;
@@ -232,19 +270,97 @@ export default function Cases() {
     setFilteredCases(filtered);
   };
 
+  const handleDatePreset = (preset: string) => {
+    const today = new Date();
+    let from: Date | null = null;
+    let to: Date | null = null;
+
+    switch (preset) {
+      case "today":
+        from = startOfToday();
+        to = endOfToday();
+        break;
+      case "yesterday":
+        from = subDays(startOfToday(), 1);
+        to = subDays(endOfToday(), 1);
+        break;
+      case "thisMonth":
+        from = startOfMonth(today);
+        to = endOfMonth(today);
+        break;
+      case "pastMonth":
+        from = startOfMonth(subMonths(today, 1));
+        to = endOfMonth(subMonths(today, 1));
+        break;
+      case "past3Months":
+        from = subMonths(today, 3);
+        to = today;
+        break;
+      default:
+        from = null;
+        to = null;
+    }
+
+    setFilters(prev => ({
+      ...prev,
+      dateRange: { from, to },
+      datePreset: preset
+    }));
+  };
+
+  const handleDateInputChange = (type: 'from' | 'to', value: string) => {
+    setDateInputs(prev => ({ ...prev, [type]: value }));
+    
+    const date = parseDateInput(value);
+    if (date) {
+      setFilters(prev => ({
+        ...prev,
+        dateRange: { ...prev.dateRange, [type]: date },
+        datePreset: "custom"
+      }));
+    }
+  };
+
+  const handleDateInputBlur = (type: 'from' | 'to') => {
+    if (!dateInputs[type]) {
+      setFilters(prev => ({
+        ...prev,
+        dateRange: { ...prev.dateRange, [type]: null },
+        datePreset: "custom"
+      }));
+    }
+  };
+
+  const handleFromDateSelect = (date: Date | undefined) => {
+    if (date) {
+      setFilters(prev => ({
+        ...prev,
+        dateRange: { ...prev.dateRange, from: date },
+        datePreset: "custom"
+      }));
+    }
+    setFromCalendarOpen(false);
+  };
+
+  const handleToDateSelect = (date: Date | undefined) => {
+    if (date) {
+      setFilters(prev => ({
+        ...prev,
+        dateRange: { ...prev.dateRange, to: date },
+        datePreset: "custom"
+      }));
+    }
+    setToCalendarOpen(false);
+  };
+
   const clearFilters = () => {
     setFilters({
       dateRange: { from: null, to: null },
       status: "all",
       search: "",
+      datePreset: "any"
     });
-  };
-
-  const handleDateSelect = (range: { from: Date | null; to: Date | null }) => {
-    setFilters(prev => ({
-      ...prev,
-      dateRange: range
-    }));
+    setDateInputs({ from: "", to: "" });
   };
 
   const getActiveFilterCount = () => {
@@ -255,7 +371,6 @@ export default function Cases() {
     return count;
   };
 
-  // CSV Export - uses filtered cases (respects current filters)
   const handleExportCSV = () => {
     if (filteredCases.length === 0) {
       alert("No data to export based on current filters.");
@@ -278,7 +393,7 @@ export default function Cases() {
       ...filteredCases.map(c => [
         c.policy_number,
         c.agent_id,
-        `"${c.client_name.replace(/"/g, '""')}"`, // Escape quotes in names
+        `"${c.client_name.replace(/"/g, '""')}"`,
         `"${c.product_type || "N/A"}"`,
         c.premium.toFixed(2),
         c.status,
@@ -287,7 +402,6 @@ export default function Cases() {
       ].join(","))
     ].join("\n");
 
-    // Generate filename with filter info
     const dateStr = format(new Date(), "yyyyMMdd_HHmm");
     const filterStr = filters.status !== "all" ? `_${filters.status}` : "";
     const filename = `Cases_Report${filterStr}_${dateStr}.csv`;
@@ -303,6 +417,10 @@ export default function Cases() {
     document.body.removeChild(link);
   };
 
+  const calculateTotalPremium = () => {
+    return filteredCases.reduce((sum, c) => sum + (c.premium || 0), 0);
+  };
+
   if (isLoading) return <div className="min-h-screen flex items-center justify-center"><Loader2 className="animate-spin" /></div>;
   if (!user) return <Navigate to="/auth" replace />;
 
@@ -310,22 +428,11 @@ export default function Cases() {
     <DashboardLayout>
       <div className="space-y-6">
         {/* Header */}
-        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+        <div className="flex justify-between items-center">
           <div>
             <h1 className="text-2xl font-bold tracking-tight">
               {isAdmin ? "Global Case Management" : "My Cases"}
             </h1>
-            <p className="text-muted-foreground">
-              {isAdmin 
-                ? `Showing ${filteredCases.length} of ${cases.length} submissions` 
-                : "View and manage your policy submissions"}
-            </p>
-            {isAdmin && filters.dateRange.from && (
-              <p className="text-sm text-primary mt-1">
-                📅 Showing submissions from {filters.dateRange.from ? format(filters.dateRange.from, "dd MMM yyyy") : "any"} 
-                {filters.dateRange.to ? ` to ${format(filters.dateRange.to, "dd MMM yyyy")}` : ""}
-              </p>
-            )}
           </div>
           
           {isAdmin && (
@@ -335,169 +442,160 @@ export default function Cases() {
               disabled={filteredCases.length === 0}
             >
               <Download className="h-4 w-4" /> 
-              Export {filteredCases.length} Records
+              Export CSV
             </Button>
           )}
         </div>
 
-        {/* Search and Filters */}
-        <Card className="border-none shadow-soft">
-          <CardHeader className="pb-3">
-            <div className="flex items-center gap-4">
-              <div className="relative flex-1">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                <Input 
-                  placeholder={isAdmin ? "Search by Policy, Client, or Agent ID..." : "Search by Policy or Client..."} 
-                  className="pl-10"
-                  value={filters.search}
-                  onChange={(e) => setFilters(prev => ({ ...prev, search: e.target.value }))}
+        {/* Search and Filter Bar */}
+        <div className="flex items-center gap-3 flex-wrap">
+          {/* Sort By Date Dropdown */}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" className="gap-2">
+                Sort by Date
+                <ChevronDown className="h-4 w-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="w-48">
+              <DropdownMenuLabel>Date Range</DropdownMenuLabel>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={() => handleDatePreset("any")}>
+                Any Date
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => handleDatePreset("today")}>
+                Today
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => handleDatePreset("yesterday")}>
+                Yesterday
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => handleDatePreset("thisMonth")}>
+                This Month
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => handleDatePreset("pastMonth")}>
+                Past Month
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => handleDatePreset("past3Months")}>
+                Past 3 Months
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+
+          {/* From Date with Calendar */}
+          <Popover open={fromCalendarOpen} onOpenChange={setFromCalendarOpen}>
+            <PopoverTrigger asChild>
+              <div className="relative">
+                <Input
+                  placeholder="From"
+                  value={dateInputs.from}
+                  onChange={(e) => handleDateInputChange('from', e.target.value)}
+                  onBlur={() => handleDateInputBlur('from')}
+                  className="w-32 pr-8"
                 />
+                <Calendar className="absolute right-2 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
               </div>
-              
-              {/* Filter Button */}
-              <Popover open={showFilters} onOpenChange={setShowFilters}>
-                <PopoverTrigger asChild>
-                  <Button variant="outline" className="relative">
-                    <Filter className="h-4 w-4 mr-2" />
-                    Filter
-                    {getActiveFilterCount() > 0 && (
-                      <Badge className="ml-2 h-5 w-5 p-0 flex items-center justify-center bg-primary">
-                        {getActiveFilterCount()}
-                      </Badge>
-                    )}
-                  </Button>
-                </PopoverTrigger>
-                <PopoverContent className="w-80">
-                  <div className="space-y-4">
-                    <h4 className="font-medium">Filter Cases</h4>
-                    
-                    {/* Status Filter */}
-                    <div className="space-y-2">
-                      <label className="text-sm font-medium">Status</label>
-                      <Select 
-                        value={filters.status} 
-                        onValueChange={(value) => setFilters(prev => ({ ...prev, status: value }))}
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder="Select status" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {statusOptions.map((status) => (
-                            <SelectItem key={status} value={status}>
-                              {status === "all" ? "All Statuses" : status.charAt(0).toUpperCase() + status.slice(1)}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
+            </PopoverTrigger>
+            <PopoverContent className="w-auto p-0" align="start">
+              <CalendarComponent
+                mode="single"
+                selected={filters.dateRange.from || undefined}
+                onSelect={handleFromDateSelect}
+                initialFocus
+              />
+            </PopoverContent>
+          </Popover>
 
-                    {/* Date Range Filter - Using submission_date_timestamp */}
-                    <div className="space-y-2">
-                      <label className="text-sm font-medium">Submission Date Range</label>
-                      <Popover>
-                        <PopoverTrigger asChild>
-                          <Button
-                            variant="outline"
-                            className="w-full justify-start text-left font-normal"
-                          >
-                            <Calendar className="mr-2 h-4 w-4" />
-                            {filters.dateRange.from ? (
-                              filters.dateRange.to ? (
-                                <>
-                                  {format(filters.dateRange.from, "dd MMM yyyy")} -{" "}
-                                  {format(filters.dateRange.to, "dd MMM yyyy")}
-                                </>
-                              ) : (
-                                format(filters.dateRange.from, "dd MMM yyyy")
-                              )
-                            ) : (
-                              "Select date range"
-                            )}
-                          </Button>
-                        </PopoverTrigger>
-                        <PopoverContent className="w-auto p-0" align="start">
-                          <CalendarComponent
-                            mode="range"
-                            selected={{
-                              from: filters.dateRange.from || undefined,
-                              to: filters.dateRange.to || undefined
-                            }}
-                            onSelect={(range) => handleDateSelect({
-                              from: range?.from || null,
-                              to: range?.to || null
-                            })}
-                            numberOfMonths={2}
-                          />
-                        </PopoverContent>
-                      </Popover>
-                    </div>
+          {/* To Date with Calendar */}
+          <Popover open={toCalendarOpen} onOpenChange={setToCalendarOpen}>
+            <PopoverTrigger asChild>
+              <div className="relative">
+                <Input
+                  placeholder="To"
+                  value={dateInputs.to}
+                  onChange={(e) => handleDateInputChange('to', e.target.value)}
+                  onBlur={() => handleDateInputBlur('to')}
+                  className="w-32 pr-8"
+                />
+                <Calendar className="absolute right-2 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+              </div>
+            </PopoverTrigger>
+            <PopoverContent className="w-auto p-0" align="start">
+              <CalendarComponent
+                mode="single"
+                selected={filters.dateRange.to || undefined}
+                onSelect={handleToDateSelect}
+                initialFocus
+              />
+            </PopoverContent>
+          </Popover>
 
-                    {/* Clear Filters */}
-                    {getActiveFilterCount() > 0 && (
-                      <Button 
-                        variant="ghost" 
-                        className="w-full mt-2"
-                        onClick={clearFilters}
-                      >
-                        <X className="h-4 w-4 mr-2" /> Clear All Filters
-                      </Button>
-                    )}
-                  </div>
-                </PopoverContent>
-              </Popover>
+          {/* Clear Date Buttons */}
+          {filters.dateRange.from && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8"
+              onClick={() => setFilters(prev => ({ ...prev, dateRange: { ...prev.dateRange, from: null } }))}
+            >
+              <X className="h-4 w-4" />
+            </Button>
+          )}
+
+          {/* Search Input */}
+          <div className="relative flex-1 max-w-md">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <Input 
+              placeholder={isAdmin ? "Search by Policy, Client, or Agent ID..." : "Search by Policy or Client..."} 
+              className="pl-10"
+              value={filters.search}
+              onChange={(e) => setFilters(prev => ({ ...prev, search: e.target.value }))}
+            />
+          </div>
+
+          {/* Status Filter */}
+          <Select 
+            value={filters.status} 
+            onValueChange={(value) => setFilters(prev => ({ ...prev, status: value }))}
+          >
+            <SelectTrigger className="w-32">
+              <SelectValue placeholder="Status" />
+            </SelectTrigger>
+            <SelectContent>
+              {statusOptions.map((status) => (
+                <SelectItem key={status} value={status}>
+                  {status === "all" ? "All Status" : status.charAt(0).toUpperCase() + status.slice(1)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
+          {/* Clear Filters Button */}
+          {getActiveFilterCount() > 0 && (
+            <Button variant="ghost" size="sm" onClick={clearFilters} className="gap-2">
+              <X className="h-4 w-4" />
+              Clear
+            </Button>
+          )}
+        </div>
+
+        {/* Results Summary */}
+        <div className="flex justify-between items-center">
+          <div>
+            <span className="text-lg font-semibold">All {filteredCases.length}</span>
+            <span className="text-muted-foreground ml-2">
+              ${calculateTotalPremium().toLocaleString()}
+            </span>
+          </div>
+          {filters.dateRange.from && filters.dateRange.to && (
+            <div className="text-sm text-muted-foreground">
+              {format(filters.dateRange.from, "MM-dd-yyyy")} - {format(filters.dateRange.to, "MM-dd-yyyy")}
             </div>
+          )}
+        </div>
 
-            {/* Active Filter Badges */}
-            {getActiveFilterCount() > 0 && (
-              <div className="flex flex-wrap gap-2 mt-2">
-                {filters.search && (
-                  <Badge variant="secondary" className="gap-1">
-                    Search: {filters.search}
-                    <X 
-                      className="h-3 w-3 cursor-pointer" 
-                      onClick={() => setFilters(prev => ({ ...prev, search: "" }))}
-                    />
-                  </Badge>
-                )}
-                {filters.status !== "all" && (
-                  <Badge variant="secondary" className="gap-1">
-                    Status: {filters.status}
-                    <X 
-                      className="h-3 w-3 cursor-pointer" 
-                      onClick={() => setFilters(prev => ({ ...prev, status: "all" }))}
-                    />
-                  </Badge>
-                )}
-                {filters.dateRange.from && (
-                  <Badge variant="secondary" className="gap-1">
-                    From: {format(filters.dateRange.from, "dd MMM yyyy")}
-                    <X 
-                      className="h-3 w-3 cursor-pointer" 
-                      onClick={() => setFilters(prev => ({ 
-                        ...prev, 
-                        dateRange: { from: null, to: prev.dateRange.to }
-                      }))}
-                    />
-                  </Badge>
-                )}
-                {filters.dateRange.to && (
-                  <Badge variant="secondary" className="gap-1">
-                    To: {format(filters.dateRange.to, "dd MMM yyyy")}
-                    <X 
-                      className="h-3 w-3 cursor-pointer" 
-                      onClick={() => setFilters(prev => ({ 
-                        ...prev, 
-                        dateRange: { from: prev.dateRange.from, to: null }
-                      }))}
-                    />
-                  </Badge>
-                )}
-              </div>
-            )}
-          </CardHeader>
-
-          {/* Cases Table */}
-          <CardContent>
+        {/* Cases Table */}
+        <Card className="border-none shadow-soft">
+          <CardContent className="p-0">
             {loading ? (
               <div className="py-20 text-center">
                 <Loader2 className="animate-spin mx-auto h-8 w-8 text-primary" />
@@ -517,13 +615,13 @@ export default function Cases() {
                 <TableHeader>
                   <TableRow className="bg-slate-50/50">
                     <TableHead className="font-bold">Submission Date</TableHead>
-                    <TableHead className="font-bold">Enforce Date</TableHead>
-                    <TableHead className="font-bold">Policy #</TableHead>
+                    <TableHead className="font-bold">Proposal No #</TableHead>
                     {isAdmin && <TableHead className="font-bold">Agent ID</TableHead>}
                     <TableHead className="font-bold">Agent Name</TableHead>
                     <TableHead className="font-bold">Product</TableHead>
-                    <TableHead className="text-right font-bold">Premium (RM)</TableHead>
+                    <TableHead className="text-right font-bold">Premium</TableHead>
                     <TableHead className="font-bold">Status</TableHead>
+                    <TableHead className="font-bold">Enforce Date</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -531,9 +629,6 @@ export default function Cases() {
                     <TableRow key={item.id} className="hover:bg-slate-50/50 transition-colors">
                       <TableCell className="text-xs text-muted-foreground">
                         {formatDisplayDate(item.submission_date_timestamp)}
-                      </TableCell>
-                      <TableCell className="text-xs text-muted-foreground">
-                        {formatDisplayDate(item.enforce_date)}
                       </TableCell>
                       <TableCell className="font-mono text-xs font-bold">
                         {item.policy_number}
@@ -550,7 +645,7 @@ export default function Cases() {
                         {item.product_type || "N/A"}
                       </TableCell>
                       <TableCell className="text-right font-bold">
-                        {Number(item.premium || 0).toLocaleString('en-MY', {
+                        ${Number(item.premium || 0).toLocaleString('en-MY', {
                           minimumFractionDigits: 2,
                           maximumFractionDigits: 2
                         })}
@@ -559,6 +654,9 @@ export default function Cases() {
                         <StatusBadge variant={item.status === "approved" ? "approved" : "pending"}>
                           {item.status}
                         </StatusBadge>
+                      </TableCell>
+                      <TableCell className="text-xs text-muted-foreground">
+                        {formatDisplayDate(item.enforce_date)}
                       </TableCell>
                     </TableRow>
                   ))}
