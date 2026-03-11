@@ -20,10 +20,10 @@ import {
   Download, 
   FileText, 
   Loader2, 
-  Filter,
   Calendar,
   X,
   ChevronDown,
+  ChevronUp,
 } from "lucide-react";
 import { format, parseISO, isValid, subDays, subMonths, startOfToday, endOfToday, startOfMonth, endOfMonth } from "date-fns";
 import {
@@ -124,8 +124,13 @@ const parseDateInput = (dateString: string): Date | null => {
 export default function Cases() {
   const { user, role, isLoading } = useAuth();
   const [cases, setCases] = useState<Case[]>([]);
+  const [displayedCases, setDisplayedCases] = useState<Case[]>([]);
   const [filteredCases, setFilteredCases] = useState<Case[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [hasMore, setHasMore] = useState(true);
+  const [totalCount, setTotalCount] = useState(0);
   const [filters, setFilters] = useState<Filters>({
     dateRange: { from: null, to: null },
     status: "all",
@@ -140,15 +145,20 @@ export default function Cases() {
   const [fromCalendarOpen, setFromCalendarOpen] = useState(false);
   const [toCalendarOpen, setToCalendarOpen] = useState(false);
 
+  const PAGE_SIZE = 50;
   const isAdmin = role === "admin" || user?.email === "admin@superachiever.com";
   const statusOptions = ["all", "approved", "pending", "rejected"];
 
   useEffect(() => {
-    if (user) fetchCases();
+    if (user) {
+      fetchInitialCases();
+    }
   }, [user, role]);
 
   useEffect(() => {
-    applyFilters();
+    if (cases.length > 0) {
+      applyFilters();
+    }
   }, [cases, filters]);
 
   useEffect(() => {
@@ -165,45 +175,32 @@ export default function Cases() {
     }
   }, [filters.dateRange]);
 
-  const fetchCases = async () => {
+  const fetchInitialCases = async () => {
     try {
       setLoading(true);
+      setCurrentPage(1);
       
+      // Get total count first
       const { count: totalCount, error: countError } = await supabase
         .from("cases")
         .select('*', { count: 'exact', head: true });
 
       if (countError) throw countError;
+      setTotalCount(totalCount || 0);
       console.log("📊 Total cases in database:", totalCount);
 
-      let allCases: any[] = [];
-      let page = 0;
-      const pageSize = 1000;
-      let hasMore = true;
+      // Fetch first page only
+      const { data, error } = await supabase
+        .from("cases")
+        .select("*")
+        .order("submission_date_timestamp", { ascending: false })
+        .range(0, PAGE_SIZE - 1);
 
-      while (hasMore) {
-        const { data, error } = await supabase
-          .from("cases")
-          .select("*")
-          .order("submission_date_timestamp", { ascending: false })
-          .range(page * pageSize, (page + 1) * pageSize - 1);
+      if (error) throw error;
+      
+      console.log(`📊 Fetched first page: ${data?.length} cases`);
 
-        if (error) throw error;
-        
-        if (data && data.length > 0) {
-          allCases = [...allCases, ...data];
-          page++;
-          console.log(`📊 Fetched page ${page}: ${data.length} cases (total so far: ${allCases.length})`);
-        }
-        
-        if (!data || data.length < pageSize) {
-          hasMore = false;
-        }
-      }
-
-      console.log("📊 TOTAL cases fetched:", allCases.length);
-
-      let finalCases = allCases;
+      let finalCases = data || [];
       
       if (!isAdmin) {
         const { data: profile } = await supabase
@@ -213,9 +210,10 @@ export default function Cases() {
           .maybeSingle();
 
         if (profile?.agent_code) {
-          finalCases = allCases.filter(c => c.agent_id === profile.agent_code);
+          finalCases = (data || []).filter(c => c.agent_id === profile.agent_code);
         } else {
           setCases([]);
+          setDisplayedCases([]);
           setFilteredCases([]);
           setLoading(false);
           return;
@@ -223,11 +221,59 @@ export default function Cases() {
       }
 
       setCases(finalCases);
+      setHasMore((totalCount || 0) > PAGE_SIZE);
       
     } catch (error) {
       console.error("Error fetching cases:", error);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const loadMoreCases = async () => {
+    if (loadingMore || !hasMore) return;
+
+    try {
+      setLoadingMore(true);
+      const nextPage = currentPage + 1;
+      const start = currentPage * PAGE_SIZE;
+      const end = (nextPage * PAGE_SIZE) - 1;
+
+      const { data, error } = await supabase
+        .from("cases")
+        .select("*")
+        .order("submission_date_timestamp", { ascending: false })
+        .range(start, end);
+
+      if (error) throw error;
+
+      if (data && data.length > 0) {
+        let newCases = data;
+        
+        // Apply role filtering if needed
+        if (!isAdmin) {
+          const { data: profile } = await supabase
+            .from('profiles')
+            .select('agent_code')
+            .eq('id', user?.id)
+            .maybeSingle();
+
+          if (profile?.agent_code) {
+            newCases = data.filter(c => c.agent_id === profile.agent_code);
+          }
+        }
+
+        const updatedCases = [...cases, ...newCases];
+        setCases(updatedCases);
+        setCurrentPage(nextPage);
+        setHasMore((nextPage * PAGE_SIZE) < totalCount);
+      } else {
+        setHasMore(false);
+      }
+    } catch (error) {
+      console.error("Error loading more cases:", error);
+    } finally {
+      setLoadingMore(false);
     }
   };
 
@@ -268,6 +314,7 @@ export default function Cases() {
     }
 
     setFilteredCases(filtered);
+    setDisplayedCases(filtered);
   };
 
   const handleDatePreset = (preset: string) => {
@@ -581,7 +628,7 @@ export default function Cases() {
         {/* Results Summary */}
         <div className="flex justify-between items-center">
           <div>
-            <span className="text-lg font-semibold">All {filteredCases.length}</span>
+            <span className="text-lg font-semibold">Showing {filteredCases.length} of {totalCount}</span>
             <span className="text-muted-foreground ml-2">
               ${calculateTotalPremium().toLocaleString()}
             </span>
@@ -611,57 +658,90 @@ export default function Cases() {
                 )}
               </div>
             ) : (
-              <Table>
-                <TableHeader>
-                  <TableRow className="bg-slate-50/50">
-                    <TableHead className="font-bold">Submission Date</TableHead>
-                    <TableHead className="font-bold">Proposal No #</TableHead>
-                    {isAdmin && <TableHead className="font-bold">Agent ID</TableHead>}
-                    <TableHead className="font-bold">Agent Name</TableHead>
-                    <TableHead className="font-bold">Product</TableHead>
-                    <TableHead className="text-right font-bold">Premium</TableHead>
-                    <TableHead className="font-bold">Status</TableHead>
-                    <TableHead className="font-bold">Enforce Date</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {filteredCases.map((item) => (
-                    <TableRow key={item.id} className="hover:bg-slate-50/50 transition-colors">
-                      <TableCell className="text-xs text-muted-foreground">
-                        {formatDisplayDate(item.submission_date_timestamp)}
-                      </TableCell>
-                      <TableCell className="font-mono text-xs font-bold">
-                        {item.policy_number}
-                      </TableCell>
-                      {isAdmin && (
-                        <TableCell className="text-xs">
-                          <span className="bg-primary/10 text-primary px-2 py-0.5 rounded font-bold uppercase">
-                            {item.agent_id}
-                          </span>
-                        </TableCell>
-                      )}
-                      <TableCell className="font-medium">{item.client_name}</TableCell>
-                      <TableCell className="text-muted-foreground text-xs">
-                        {item.product_type || "N/A"}
-                      </TableCell>
-                      <TableCell className="text-right font-bold">
-                        ${Number(item.premium || 0).toLocaleString('en-MY', {
-                          minimumFractionDigits: 2,
-                          maximumFractionDigits: 2
-                        })}
-                      </TableCell>
-                      <TableCell>
-                        <StatusBadge variant={item.status === "approved" ? "approved" : "pending"}>
-                          {item.status}
-                        </StatusBadge>
-                      </TableCell>
-                      <TableCell className="text-xs text-muted-foreground">
-                        {formatDisplayDate(item.enforce_date)}
-                      </TableCell>
+              <>
+                <Table>
+                  <TableHeader>
+                    <TableRow className="bg-slate-50/50">
+                      <TableHead className="font-bold">Submission Date</TableHead>
+                      <TableHead className="font-bold">Proposal No #</TableHead>
+                      {isAdmin && <TableHead className="font-bold">Agent ID</TableHead>}
+                      <TableHead className="font-bold">Agent Name</TableHead>
+                      <TableHead className="font-bold">Product</TableHead>
+                      <TableHead className="text-right font-bold">Premium</TableHead>
+                      <TableHead className="font-bold">Status</TableHead>
+                      <TableHead className="font-bold">Enforce Date</TableHead>
                     </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+                  </TableHeader>
+                  <TableBody>
+                    {filteredCases.map((item) => (
+                      <TableRow key={item.id} className="hover:bg-slate-50/50 transition-colors">
+                        <TableCell className="text-xs text-muted-foreground">
+                          {formatDisplayDate(item.submission_date_timestamp)}
+                        </TableCell>
+                        <TableCell className="font-mono text-xs font-bold">
+                          {item.policy_number}
+                        </TableCell>
+                        {isAdmin && (
+                          <TableCell className="text-xs">
+                            <span className="bg-primary/10 text-primary px-2 py-0.5 rounded font-bold uppercase">
+                              {item.agent_id}
+                            </span>
+                          </TableCell>
+                        )}
+                        <TableCell className="font-medium">{item.client_name}</TableCell>
+                        <TableCell className="text-muted-foreground text-xs">
+                          {item.product_type || "N/A"}
+                        </TableCell>
+                        <TableCell className="text-right font-bold">
+                          ${Number(item.premium || 0).toLocaleString('en-MY', {
+                            minimumFractionDigits: 2,
+                            maximumFractionDigits: 2
+                          })}
+                        </TableCell>
+                        <TableCell>
+                          <StatusBadge variant={item.status === "approved" ? "approved" : "pending"}>
+                            {item.status}
+                          </StatusBadge>
+                        </TableCell>
+                        <TableCell className="text-xs text-muted-foreground">
+                          {formatDisplayDate(item.enforce_date)}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+
+                {/* Load More Button */}
+                {hasMore && filteredCases.length === cases.length && (
+                  <div className="flex justify-center py-6 border-t">
+                    <Button
+                      variant="outline"
+                      onClick={loadMoreCases}
+                      disabled={loadingMore}
+                      className="min-w-[200px]"
+                    >
+                      {loadingMore ? (
+                        <>
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                          Loading...
+                        </>
+                      ) : (
+                        <>
+                          Load More
+                          <ChevronDown className="ml-2 h-4 w-4" />
+                        </>
+                      )}
+                    </Button>
+                  </div>
+                )}
+
+                {/* Show message when filters are applied but not all data is loaded */}
+                {hasMore && filteredCases.length < cases.length && (
+                  <div className="text-center py-4 text-sm text-muted-foreground border-t">
+                    Filters are applied to currently loaded data. Load more to filter additional records.
+                  </div>
+                )}
+              </>
             )}
           </CardContent>
         </Card>
