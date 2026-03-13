@@ -1,14 +1,21 @@
 # python_engine/database.py
-from supabase import create_client
+from supabase import create_client  # ADD THIS - was missing
+from supabase_client import supabase  # Import from new file
 import os
-from dotenv import load_dotenv
-from pathlib import Path
 from datetime import datetime
 import pandas as pd
 import gc  # Garbage collection
 import time
 import re
 from typing import Tuple, Optional
+from pathlib import Path
+from dotenv import load_dotenv
+
+# Import TransferManager
+from manage_transfers import TransferManager
+
+# Initialize Transfer Manager
+transfer_manager = TransferManager() if supabase else None
 
 # Load from root .env file
 env_path = Path(__file__).parent.parent / '.env'
@@ -27,9 +34,12 @@ if not url or not key:
     print(f"VITE_SUPABASE_URL: {url}")
     print(f"SUPABASE_SERVICE_ROLE_KEY: {'[SET]' if key else '[NOT SET]'}")
     supabase = None
+    transfer_manager = None
 else:
     print("✅ Supabase credentials loaded successfully")
     supabase = create_client(url, key)
+    # Initialize Transfer Manager
+    transfer_manager = TransferManager()
 
 def parse_date(date_value):
     """Helper function to parse dates from various formats"""
@@ -128,13 +138,6 @@ def sync_to_supabase_chunked(df: pd.DataFrame, chunk_size: int = 100) -> Tuple[i
     print(f"🚀 Starting chunked sync of {total_records} records...")
     print(f"📦 Using chunk size: {chunk_size}")
     
-    # Debug: Print sample of AFYC values
-    print("\n📊 Sample premium values from first 10 rows:")
-    for i in range(min(10, len(df))):
-        row = df.iloc[i]
-        premium = extract_premium_value(row)
-        print(f"  Row {i}: AGENT_CODE={row.get('AGENT_CODE', 'N/A')}, AFYC={row.get('AFYC', 'N/A')}, Extracted={premium}")
-    
     success_count = 0
     error_count = 0
     start_time = time.time()
@@ -169,17 +172,27 @@ def sync_to_supabase_chunked(df: pd.DataFrame, chunk_size: int = 100) -> Tuple[i
                 # Get current timestamp
                 now = datetime.now().isoformat()
                 
-                # Parse dates - use the already parsed dates from excel_bot
+                # Parse dates
                 submission_date = row.get('PROPOSAL_RECEIVED_DATE')
                 risk_date = row.get('RISK_COMMENCEMENT_DATE')
                 
                 # Extract premium value
                 premium_value = extract_premium_value(row)
                 
-                # Prepare case data
+                # Get credited agent considering transfers
+                credited_agent = agent_code
+                if transfer_manager:
+                    credited_agent = transfer_manager.get_credited_agent(
+                        agent_code, 
+                        submission_date or now
+                    )
+                
+                # Prepare case data with transfer tracking
                 case_data = {
                     "policy_number": str(row.get('PROPOSALNO', row.get('POLICYNO', ''))).strip(),
                     "agent_id": agent_code,
+                    "credited_agent_id": credited_agent,
+                    "original_agent_id": agent_code if credited_agent != agent_code else None,
                     "client_name": str(row.get('AGENT_NAME', 'Unknown')),
                     "premium": premium_value,
                     "status": "approved" if "Inforce" in str(row.get('PROPOSAL_STATUS', '')) else "pending",
@@ -270,17 +283,27 @@ def sync_to_supabase(df: pd.DataFrame, use_chunking: bool = True, chunk_size: in
             # Get current timestamp
             now = datetime.now().isoformat()
             
-            # Parse dates - use the already parsed dates from excel_bot
+            # Parse dates
             submission_date = row.get('PROPOSAL_RECEIVED_DATE')
             risk_date = row.get('RISK_COMMENCEMENT_DATE')
             
             # Extract premium value
             premium_value = extract_premium_value(row)
             
-            # Prepare case data
+            # Get credited agent considering transfers
+            credited_agent = agent_code
+            if transfer_manager:
+                credited_agent = transfer_manager.get_credited_agent(
+                    agent_code, 
+                    submission_date or now
+                )
+            
+            # Prepare case data with transfer tracking
             case_data = {
                 "policy_number": str(row.get('PROPOSALNO', row.get('POLICYNO', ''))).strip(),
                 "agent_id": agent_code,
+                "credited_agent_id": credited_agent,
+                "original_agent_id": agent_code if credited_agent != agent_code else None,
                 "client_name": str(row.get('AGENT_NAME', row.get('CLIENT_NAME', 'Unknown'))),
                 "premium": premium_value,
                 "status": "approved" if "Inforce" in str(row.get('PROPOSAL_STATUS', '')) else "pending",
@@ -345,50 +368,99 @@ def batch_get_agent_codes(agent_codes: list) -> dict:
 
 def sync_to_supabase_optimized(df: pd.DataFrame, batch_size: int = 50) -> Tuple[int, int]:
     """
-    Optimized version using batch operations for maximum performance
+    Optimized version using batch operations for maximum performance with transfer handling
     """
     if not supabase:
         print("❌ Supabase client not initialized")
         return 0, 0
     
+    print(f"\n{'='*60}")
     print(f"🚀 Starting optimized sync of {len(df)} records...")
-    
-    # Debug: Print sample of AFYC values
-    print("\n📊 Sample premium values from first 10 rows:")
-    for i in range(min(10, len(df))):
-        row = df.iloc[i]
-        premium = extract_premium_value(row)
-        print(f"  Row {i}: AGENT_CODE={row.get('AGENT_CODE', 'N/A')}, AFYC={row.get('AFYC', 'N/A')}, Extracted={premium}")
+    print(f"{'='*60}\n")
     
     # Get all unique agent codes from the dataframe
     unique_agent_codes = df['AGENT_CODE'].dropna().unique().tolist()
     unique_agent_codes = [str(code).strip() for code in unique_agent_codes]
     
-    # Batch check which agents exist
-    print(f"🔍 Checking {len(unique_agent_codes)} unique agent codes...")
-    existing_agents = batch_get_agent_codes(unique_agent_codes)
+    print(f"📊 EXCEL FILE STATISTICS:")
+    print(f"  Total rows in Excel: {len(df)}")
+    print(f"  Unique agent codes in Excel: {len(unique_agent_codes)}")
+    print(f"  Sample of Excel agent codes (first 20):")
+    for i, code in enumerate(sorted(unique_agent_codes)[:20], 1):
+        print(f"    {i:3}. {code}")
+    
+    # Fetch ALL agent codes from profiles table
+    print(f"\n📡 Fetching all agent codes from profiles table...")
+    result = supabase.table("profiles").select("agent_code").execute()
+    existing_agents = {item['agent_code'] for item in result.data}
+    
+    print(f"  Total agents in profiles: {len(existing_agents)}")
+    print(f"  Sample of profile agent codes (first 20):")
+    for i, code in enumerate(sorted(existing_agents)[:20], 1):
+        print(f"    {i:3}. {code}")
+    
+    # Find which codes are missing
+    missing_codes = []
+    matched_codes = []
+    
+    for code in unique_agent_codes:
+        if code in existing_agents:
+            matched_codes.append(code)
+        else:
+            missing_codes.append(code)
+    
+    print(f"\n🔍 AGENT CODE MATCHING RESULTS:")
+    print(f"  ✅ Matched codes: {len(matched_codes)}")
+    print(f"  ❌ Missing codes: {len(missing_codes)}")
+    
+    if matched_codes:
+        print(f"\n✅ MATCHED CODES (will be processed):")
+        for i, code in enumerate(sorted(matched_codes)[:20], 1):
+            print(f"    {i:3}. {code}")
+        if len(matched_codes) > 20:
+            print(f"    ... and {len(matched_codes) - 20} more")
+    
+    if missing_codes:
+        print(f"\n❌ MISSING CODES (will be skipped):")
+        for i, code in enumerate(sorted(missing_codes)[:20], 1):
+            print(f"    {i:3}. {code}")
+        if len(missing_codes) > 20:
+            print(f"    ... and {len(missing_codes) - 20} more")
+        
+        # Save to file
+        filename = f"missing_agent_codes_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+        with open(filename, 'w') as f:
+            f.write(f"Missing Agent Codes Report\n")
+            f.write(f"Generated: {datetime.now().isoformat()}\n")
+            f.write(f"Total missing: {len(missing_codes)}\n")
+            f.write("=" * 50 + "\n")
+            for code in sorted(missing_codes):
+                f.write(f"{code}\n")
+        print(f"\n📁 Full list saved to: {os.path.abspath(filename)}")
+    
+    # Now process only matched codes
+    print(f"\n{'='*60}")
+    print(f"📦 PROCESSING {len(matched_codes)} MATCHED AGENT CODES...")
+    print(f"{'='*60}\n")
     
     success_count = 0
     error_count = 0
     start_time = time.time()
     skipped_no_agent = 0
     skipped_zero_premium = 0
+    transfer_count = 0
+    
+    # Filter dataframe to only include matched agent codes
+    matched_df = df[df['AGENT_CODE'].isin(matched_codes)]
+    print(f"  Records after filtering by matched codes: {len(matched_df)}")
     
     # Prepare batches for upsert
     batches = []
     current_batch = []
     
-    for idx, (_, row) in enumerate(df.iterrows()):
+    for idx, (_, row) in enumerate(matched_df.iterrows()):
         try:
             agent_code = str(row.get('AGENT_CODE', '')).strip()
-            if not agent_code:
-                skipped_no_agent += 1
-                continue
-            
-            # Check if agent exists using our cached map
-            if agent_code not in existing_agents:
-                skipped_no_agent += 1
-                continue
             
             now = datetime.now().isoformat()
             
@@ -401,12 +473,28 @@ def sync_to_supabase_optimized(df: pd.DataFrame, batch_size: int = 50) -> Tuple[
             
             if premium_value == 0:
                 skipped_zero_premium += 1
-                if idx < 10:  # Log first few zero premiums
-                    print(f"  ⚠️ Zero premium for agent {agent_code}, AFYC={row.get('AFYC', 'N/A')}")
+                if idx < 10:
+                    print(f"  ⚠️ Zero premium for {agent_code}")
             
+            # Get credited agent considering transfers
+            credited_agent = agent_code
+            if transfer_manager:
+                credited_agent = transfer_manager.get_credited_agent(
+                    agent_code, 
+                    submission_date or now
+                )
+            
+            if credited_agent != agent_code:
+                transfer_count += 1
+                if transfer_count <= 10:
+                    print(f"  🔄 Transfer: {agent_code} → {credited_agent}")
+            
+            # Prepare case data with transfer tracking
             case_data = {
                 "policy_number": str(row.get('PROPOSALNO', row.get('POLICYNO', ''))).strip(),
                 "agent_id": agent_code,
+                "credited_agent_id": credited_agent,
+                "original_agent_id": agent_code if credited_agent != agent_code else None,
                 "client_name": str(row.get('AGENT_NAME', row.get('CLIENT_NAME', 'Unknown'))),
                 "premium": premium_value,
                 "status": "approved" if "Inforce" in str(row.get('PROPOSAL_STATUS', '')) else "pending",
@@ -435,45 +523,47 @@ def sync_to_supabase_optimized(df: pd.DataFrame, batch_size: int = 50) -> Tuple[
     if current_batch:
         batches.append(current_batch)
     
-    print(f"\n📊 Summary:")
-    print(f"  Total rows processed: {len(df)}")
-    print(f"  Rows skipped (no agent/not found): {skipped_no_agent}")
+    print(f"\n📊 BATCH SUMMARY:")
+    print(f"  Total rows in filtered data: {len(matched_df)}")
+    print(f"  Batches created: {len(batches)}")
     print(f"  Rows with zero premium: {skipped_zero_premium}")
-    print(f"  Batches to execute: {len(batches)}")
+    print(f"  Cases transferred: {transfer_count}")
     
     # Execute all batches
     print(f"\n📦 Executing {len(batches)} batches...")
     for i, batch in enumerate(batches):
         try:
-            # Debug: Print first record in batch to verify premium and dates
+            # Debug: Print first record in batch
             if i == 0 and batch:
                 print(f"\n  Sample record from batch 1:")
                 print(f"    Policy: {batch[0].get('policy_number', 'N/A')}")
                 print(f"    Agent: {batch[0].get('agent_id', 'N/A')}")
+                if batch[0].get('credited_agent_id') and batch[0].get('credited_agent_id') != batch[0].get('agent_id'):
+                    print(f"    Credited to: {batch[0].get('credited_agent_id')}")
                 print(f"    Premium: {batch[0].get('premium', 'N/A')}")
                 print(f"    Submission Date: {batch[0].get('submission_date_timestamp', 'N/A')}")
-                print(f"    Enforce Date: {batch[0].get('enforce_date', 'N/A')}")
             
             supabase.table("cases").upsert(batch, on_conflict="policy_number").execute()
             success_count += len(batch)
             
             elapsed = time.time() - start_time
             rate = success_count / elapsed if elapsed > 0 else 0
-            print(f"  ✅ Batch {i+1}/{len(batches)} complete ({success_count}/{len(df)} records, {rate:.1f} rec/sec)")
+            print(f"  ✅ Batch {i+1}/{len(batches)} complete ({success_count}/{len(matched_df)} records, {rate:.1f} rec/sec)")
             
         except Exception as e:
             print(f"❌ Batch {i+1} failed: {e}")
             error_count += len(batch)
         
-        # Small delay between batches
         time.sleep(0.2)
     
     elapsed = time.time() - start_time
-    print(f"\n✅ Optimized sync complete:")
-    print(f"  Success: {success_count}")
+    print(f"\n{'='*60}")
+    print(f"✅ FINAL RESULTS:")
+    print(f"  Successfully synced: {success_count}")
     print(f"  Errors: {error_count}")
     print(f"  Time: {elapsed:.2f} seconds")
-    print(f"  Avg rate: {success_count/elapsed:.1f} records/sec")
+    print(f"  Cases transferred: {transfer_count}")
+    print(f"{'='*60}\n")
     
     return success_count, error_count
 
@@ -481,19 +571,24 @@ def check_premium_values(limit: int = 20):
     """Check premium values in the database for debugging"""
     try:
         result = supabase.table("cases") \
-            .select("policy_number, agent_id, premium, submission_date_timestamp, enforce_date, created_at") \
+            .select("policy_number, agent_id, credited_agent_id, premium, submission_date_timestamp, enforce_date, created_at") \
             .order("created_at", desc=True) \
             .limit(limit) \
             .execute()
         
         print("\n📊 Current values in database (most recent):")
-        print("-" * 80)
+        print("-" * 100)
         for item in result.data:
             sub_date = item.get('submission_date_timestamp', 'N/A')
             if sub_date and sub_date != 'N/A':
-                sub_date = sub_date[:10]  # Show only YYYY-MM-DD
-            print(f"  Policy: {item['policy_number'][:15]:<15} Premium: {item['premium']:>10.2f}  Sub: {sub_date}")
-        print("-" * 80)
+                sub_date = sub_date[:10]
+            
+            credited = item.get('credited_agent_id', '')
+            if credited and credited != item.get('agent_id'):
+                print(f"  Policy: {item['policy_number'][:15]:<15} Agent: {item['agent_id']:<10} → {credited:<10} Premium: {item['premium']:>10.2f}  Sub: {sub_date}")
+            else:
+                print(f"  Policy: {item['policy_number'][:15]:<15} Agent: {item['agent_id']:<10} Premium: {item['premium']:>10.2f}  Sub: {sub_date}")
+        print("-" * 100)
         
         return result.data
     except Exception as e:
@@ -520,6 +615,12 @@ def get_stats():
         agent_result = supabase.table("profiles").select("*", count="exact").execute()
         cases_result = supabase.table("cases").select("*", count="exact").execute()
         
+        # Get transfer stats
+        transfer_count = 0
+        if transfer_manager:
+            report = transfer_manager.generate_report()
+            transfer_count = report.get('cases_with_transfers', 0)
+        
         # Get latest case using timestamp
         latest = supabase.table("cases") \
             .select("submission_date_timestamp") \
@@ -534,6 +635,7 @@ def get_stats():
         return {
             "totalAgents": agent_result.count if hasattr(agent_result, 'count') else 0,
             "totalCases": cases_result.count if hasattr(cases_result, 'count') else 0,
+            "transferredCases": transfer_count,
             "lastUpdated": last_updated
         }
     except Exception as e:
@@ -541,5 +643,6 @@ def get_stats():
         return {
             "totalAgents": 0,
             "totalCases": 0,
+            "transferredCases": 0,
             "lastUpdated": None
         }

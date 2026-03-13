@@ -12,6 +12,7 @@ import Contests from "./pages/Contests";
 import Leaderboards from "./pages/Leaderboards";
 import Alerts from "./pages/Alerts";
 import Reports from "./pages/Reports";
+import NAIS from "./pages/NAIS"; // 1. IMPORT THE NEW PAGE
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -32,6 +33,10 @@ const App = () => (
             <Route path="/dashboard/leaderboards" element={<Leaderboards />} />
             <Route path="/dashboard/alerts" element={<Alerts />} />
             <Route path="/dashboard/reports" element={<Reports />} />
+            
+            {/* 2. ADD THE NAIS ROUTE HERE */}
+            <Route path="/dashboard/nais" element={<NAIS />} />
+
             {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
             <Route path="*" element={<NotFound />} />
           </Routes>

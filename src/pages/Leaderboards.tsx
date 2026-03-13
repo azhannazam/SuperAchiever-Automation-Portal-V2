@@ -31,7 +31,8 @@ import {
   ChevronRight,
   Building2,
   AlertCircle,
-  Info
+  Info,
+  UserCircle,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { format, startOfMonth, endOfMonth, startOfYear, endOfYear, subMonths, subDays } from "date-fns";
@@ -70,6 +71,8 @@ interface LeaderboardEntry {
   premium: number;
   rank_title: string;
   isCurrentUser: boolean;
+  leader_name?: string | null;  // For hierarchy
+  introducer_name?: string | null; // For hierarchy
 }
 
 interface AgentEntry {
@@ -141,16 +144,34 @@ export default function Leaderboards() {
     withPremium: 0,
     withoutPremium: 0
   });
+  const [currentUserCode, setCurrentUserCode] = useState<string>("");
 
   const isAdmin = role === "admin" || user?.email === "admin@superachiever.com";
   const API_BASE_URL = "http://127.0.0.1:8000";
 
   useEffect(() => {
     if (user) {
+      fetchCurrentUserCode();
       fetchRealLeaderboard();
       fetchTotalProduction();
     }
   }, [user]);
+
+  const fetchCurrentUserCode = async () => {
+    try {
+      const { data } = await supabase
+        .from('profiles')
+        .select('agent_code')
+        .eq('email', user?.email)
+        .maybeSingle();
+      
+      if (data?.agent_code) {
+        setCurrentUserCode(data.agent_code);
+      }
+    } catch (err) {
+      console.error("Error fetching user code:", err);
+    }
+  };
 
   useEffect(() => {
     if (activeCategory === "GAD" && allCases.length > 0) {
@@ -163,6 +184,18 @@ export default function Leaderboards() {
       buildADHierarchy();
     }
   }, [activeCategory, leaderboardData]);
+
+  const scrollToUser = () => {
+    const userElement = document.getElementById(`user-${currentUserCode}`);
+    if (userElement) {
+      userElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      // Highlight temporarily
+      userElement.classList.add('ring-2', 'ring-primary', 'ring-offset-2');
+      setTimeout(() => {
+        userElement.classList.remove('ring-2', 'ring-primary', 'ring-offset-2');
+      }, 2000);
+    }
+  };
 
   const fetchTotalProduction = async () => {
     try {
@@ -279,6 +312,7 @@ export default function Leaderboards() {
       agentsMap.forEach((agent, agentCode) => {
         const profile = profilesMap.get(agentCode);
         if (profile) {
+          // Check hierarchy based on introducer_name and leader_name
           const isUnderThisAD = 
             (profile.introducer_name && 
               (profile.introducer_name === ad.name || 
@@ -348,7 +382,7 @@ export default function Leaderboards() {
       if (countError) throw countError;
       console.log("📊 REAL total cases in database:", totalCasesCount);
 
-      // Fetch ALL profiles (profiles table is small, no pagination needed)
+      // Fetch ALL profiles
       const { data: profilesData, error: profilesError } = await supabase
         .from('profiles')
         .select('*');
@@ -364,7 +398,7 @@ export default function Leaderboards() {
       // Fetch ALL cases with dates using pagination
       const allCasesWithDates = await fetchAllCasesWithPagination(
         'cases', 
-        'premium, submission_date_timestamp, agent_id'
+        'premium, submission_date_timestamp, agent_id, credited_agent_id'
       );
 
       console.log("📊 TOTAL cases fetched with pagination:", allCasesWithDates.length);
@@ -372,7 +406,7 @@ export default function Leaderboards() {
       const formattedCases = allCasesWithDates.map(c => ({
         premium: Number(c.premium || 0),
         submission_date_timestamp: c.submission_date_timestamp,
-        agent_id: c.agent_id
+        agent_id: c.agent_id || c.credited_agent_id // Use credited_agent_id if available
       }));
       
       setAllCases(formattedCases);
@@ -380,7 +414,7 @@ export default function Leaderboards() {
       // Fetch ALL cases data with pagination
       const allCasesData = await fetchAllCasesWithPagination(
         'cases',
-        'premium, agent_id'
+        'premium, agent_id, credited_agent_id'
       );
 
       if (allCasesData && profilesData) {
@@ -391,7 +425,8 @@ export default function Leaderboards() {
 
         allCasesData.forEach((c: any) => {
           const amt = Number(c.premium || 0);
-          const agentId = c.agent_id;
+          // Use credited_agent_id if available, otherwise agent_id
+          const agentId = c.credited_agent_id || c.agent_id;
           
           if (profileMap.has(agentId)) {
             if (!stats[agentId]) stats[agentId] = { premium: 0, cases: 0 };
@@ -435,21 +470,36 @@ export default function Leaderboards() {
             cases: pStats.cases,
             premium: pStats.premium,
             rank_title: rankTitle,
-            isCurrentUser: p.email === user?.email
+            isCurrentUser: p.email === user?.email,
+            leader_name: p.leader_name,
+            introducer_name: p.introducer_name
           };
 
           categories["GAD"].push(entry);
 
+          // Apply hierarchy for categorization
           const rankUpper = String(rankTitle).toUpperCase();
+          
+          // AD categorization
           if (rankUpper.includes("AGENCY DIRECTOR") || rankUpper.includes("AD")) {
             categories["AD"].push(entry);
-          } else if (rankUpper.includes("AGENCY GROWTH MANAGER") || rankUpper.includes("AGM")) {
+          } 
+          // AGM categorization
+          else if (rankUpper.includes("AGENCY GROWTH MANAGER") || rankUpper.includes("AGM")) {
             categories["AGM"].push(entry);
-          } else if (!rankUpper.includes("GROUP AGENCY DIRECTOR") && !rankUpper.includes("GAD")) {
+          } 
+          // Agent categorization (exclude GAD and AD/AGM)
+          else if (!rankUpper.includes("GROUP AGENCY DIRECTOR") && 
+                   !rankUpper.includes("GAD") && 
+                   !rankUpper.includes("AGENCY DIRECTOR") && 
+                   !rankUpper.includes("AD") &&
+                   !rankUpper.includes("AGENCY GROWTH MANAGER") && 
+                   !rankUpper.includes("AGM")) {
             categories["Agt"].push(entry);
           }
         });
 
+        // Sort and rank each category
         Object.keys(categories).forEach(cat => {
           categories[cat].sort((a, b) => b.premium - a.premium);
           categories[cat] = categories[cat].map((item, index) => ({ ...item, rank: index + 1 }));
@@ -466,7 +516,7 @@ export default function Leaderboards() {
 
   const handleExportCSV = () => {
     const currentData = leaderboardData[activeCategory] || [];
-    const headers = ["Rank", "Name", "Agent Code", "Rank", "Total Cases", "Total AFYC"];
+    const headers = ["Rank", "Name", "Agent Code", "Rank Title", "Total Cases", "Total AFYC", "Leader Name", "Introducer Name"];
     const csvContent = [
       headers.join(","),
       ...currentData.map(entry => [
@@ -475,7 +525,9 @@ export default function Leaderboards() {
         entry.agentCode, 
         `"${entry.rank_title}"`,
         entry.cases, 
-        entry.premium.toFixed(2)
+        entry.premium.toFixed(2),
+        `"${entry.leader_name || ''}"`,
+        `"${entry.introducer_name || ''}"`
       ].join(","))
     ].join("\n");
     const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
@@ -502,11 +554,24 @@ export default function Leaderboards() {
             </h1>
             <p className="text-muted-foreground">Real-time rankings across all rank categories</p>
           </div>
-          {isAdmin && (
-            <Button onClick={handleExportCSV} className="flex gap-2 shadow-md">
-              <Download className="h-4 w-4" /> Export {activeCategory} Rankings
-            </Button>
-          )}
+          <div className="flex items-center gap-2">
+            {currentUserCode && (
+              <Button 
+                variant="outline" 
+                size="sm" 
+                onClick={scrollToUser}
+                className="flex items-center gap-2 border-primary/20 hover:bg-primary/5"
+              >
+                <UserCircle className="h-4 w-4 text-primary" />
+                Jump to Me
+              </Button>
+            )}
+            {isAdmin && (
+              <Button onClick={handleExportCSV} className="flex gap-2 shadow-md">
+                <Download className="h-4 w-4" /> Export {activeCategory} Rankings
+              </Button>
+            )}
+          </div>
         </div>
 
         <Tabs value={activeCategory} onValueChange={setActiveCategory}>
@@ -528,7 +593,7 @@ export default function Leaderboards() {
                 </div>
               ) : cat.id === "GAD" ? (
                 <div className="space-y-6">
-                  {/* Database Stats Card with Info Icons */}
+                  {/* GAD tab content - unchanged */}
                   <Card className="bg-blue-50 border-blue-200">
                     <CardHeader className="pb-2">
                       <CardTitle className="text-lg flex items-center gap-2 text-blue-700">
@@ -589,7 +654,7 @@ export default function Leaderboards() {
                     </Card>
                   )}
 
-                  {/* Total Production Card with Info Icons */}
+                  {/* Total Production Card */}
                   <Card className="bg-gradient-to-br from-primary/10 to-primary/5 border-primary/20">
                     <CardContent className="p-8">
                       <div className="grid md:grid-cols-2 gap-8">
@@ -624,7 +689,7 @@ export default function Leaderboards() {
                     </CardContent>
                   </Card>
 
-                  {/* Unattributed Production Section with Info Icon */}
+                  {/* Unattributed Production Section */}
                   {orphanedCases > 0 && (
                     <Card className="border-2 border-orange-200 bg-orange-50/50">
                       <CardHeader className="pb-2">
@@ -809,7 +874,7 @@ export default function Leaderboards() {
                     </Card>
                   </div>
 
-                  {/* Full Leaderboard List */}
+                  {/* Full Leaderboard List with IDs for scrolling */}
                   <Card className="lg:col-span-3 shadow-soft border-none">
                     <CardHeader>
                       <CardTitle className="text-lg">Full Leaderboard</CardTitle>
@@ -817,9 +882,10 @@ export default function Leaderboards() {
                     <CardContent className="space-y-3">
                       {currentData.map((entry) => (
                         <div
+                          id={`user-${entry.agentCode}`}
                           key={entry.agentCode}
                           className={cn(
-                            "flex items-center gap-4 rounded-xl border p-4 transition-all hover:translate-x-1",
+                            "flex items-center gap-4 rounded-xl border p-4 transition-all hover:translate-x-1 scroll-mt-20",
                             entry.isCurrentUser ? "bg-primary/10 border-primary ring-1 ring-primary/20" : "bg-card border-slate-100",
                             entry.rank <= 3 && !entry.isCurrentUser && "bg-primary/[0.02] border-primary/10"
                           )}
@@ -834,7 +900,18 @@ export default function Leaderboards() {
                             <p className={cn("font-bold truncate text-sm uppercase", entry.isCurrentUser && "text-primary")}>
                               {entry.name} {entry.isCurrentUser && "(You)"}
                             </p>
-                            <p className="text-[10px] text-muted-foreground font-bold uppercase tracking-widest">{entry.agentCode}</p>
+                            <div className="flex items-center gap-2">
+                              <p className="text-[10px] text-muted-foreground font-bold uppercase tracking-widest">{entry.agentCode}</p>
+                              <span className="text-[8px] bg-primary/10 text-primary px-1.5 py-0.5 rounded-full">
+                                {entry.rank_title}
+                              </span>
+                            </div>
+                            {/* Show hierarchy info for context */}
+                            {(entry.leader_name || entry.introducer_name) && (
+                              <p className="text-[8px] text-muted-foreground mt-1">
+                                ↑ {entry.leader_name || entry.introducer_name}
+                              </p>
+                            )}
                           </div>
                           <div className="text-right">
                             <p className="text-sm font-black">

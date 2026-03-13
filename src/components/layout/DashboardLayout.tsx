@@ -15,6 +15,7 @@ import {
   Menu,
   X,
   ChevronDown,
+  Award, // Added for NAIS
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -41,6 +42,7 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
     { name: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
     { name: "Cases", href: "/dashboard/cases", icon: FileText },
     { name: "Contests", href: "/dashboard/contests", icon: Trophy },
+    { name: "NAIS 2026", href: "/dashboard/nais", icon: Award }, // Added NAIS Link
     { name: "Leaderboards", href: "/dashboard/leaderboards", icon: Users },
     { name: "Alerts", href: "/dashboard/alerts", icon: Bell },
     // ADDED: Show Reports link only to Admin
@@ -148,7 +150,7 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
 
             <div className="flex-1" />
 
-            {/* ADDED: Admin Buttons in Header */}
+            {/* Admin Buttons in Header */}
             {isAdmin && (
               <div className="hidden sm:flex items-center gap-2">
                 <Button variant="outline" size="sm" asChild>
