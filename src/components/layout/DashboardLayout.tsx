@@ -20,6 +20,7 @@ import {
   Newspaper,
   Calendar,
   Archive,
+  Info,
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -203,6 +204,8 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
             <NavItem href="/dashboard/nais" icon={Award} label="NAIS 2026" currentPath={location.pathname} setSidebarOpen={setSidebarOpen} />
             <NavItem href="/dashboard/leaderboards" icon={Users} label="Leaderboards" currentPath={location.pathname} setSidebarOpen={setSidebarOpen} />
             <NavItem href="/dashboard/alerts" icon={Bell} label="Alerts" currentPath={location.pathname} setSidebarOpen={setSidebarOpen} />
+            <NavItem href="/dashboard/product" icon={Info} label="Product Info" currentPath={location.pathname} setSidebarOpen={setSidebarOpen} />
+            
             
             {isAdmin && (
               <NavItem href="/dashboard/reports" icon={Upload} label="Reports" currentPath={location.pathname} setSidebarOpen={setSidebarOpen} />

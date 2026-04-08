@@ -326,7 +326,7 @@ export default function Dashboard() {
         setCases(allCases);
         const pendingAlerts = allCases
           .filter(c => c.status === "pending")
-          .slice(0, 5)
+          .slice(0, 3) // Reduced from 5 to 3 alerts
           .map(c => ({
             id: c.id,
             policy_number: c.policy_number,
@@ -349,7 +349,7 @@ export default function Dashboard() {
           setCases(userCases);
           const userAlerts = userCases
             .filter(c => c.status === "pending")
-            .slice(0, 5)
+            .slice(0, 3) // Reduced from 5 to 3 alerts
             .map(c => ({
               id: c.id,
               policy_number: c.policy_number,
@@ -773,8 +773,9 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* Live Rankings + Alerts & Contests */}
+        {/* Live Rankings + Alerts & Contests - Reduced Height Cards */}
         <div className="grid gap-6 lg:grid-cols-3">
+          {/* Live Rankings - Takes up 2 columns */}
           <div className="lg:col-span-2">
             <LiveRankings 
               cases={cases} 
@@ -786,10 +787,11 @@ export default function Dashboard() {
             />
           </div>
 
+          {/* Right Column - Normal column without flex stretching */}
           <div className="space-y-6">
-            {/* Alerts Card */}
+            {/* Alerts Card - Natural height (not stretched) */}
             <Card className="shadow-soft">
-              <CardHeader className="flex flex-row items-center gap-2">
+              <CardHeader className="flex flex-row items-center gap-2 pb-3">
                 <Bell className="h-5 w-5 text-warning" />
                 <CardTitle className="text-lg font-semibold">Alerts</CardTitle>
                 {alerts.length > 0 && (
@@ -800,23 +802,23 @@ export default function Dashboard() {
               </CardHeader>
               <CardContent>
                 {alerts.length === 0 ? (
-                  <div className="text-center py-8">
-                    <CheckCircle2 className="h-12 w-12 mx-auto text-success opacity-50" />
+                  <div className="flex flex-col items-center justify-center py-6">
+                    <CheckCircle2 className="h-10 w-10 mx-auto text-success opacity-50" />
                     <p className="text-sm text-muted-foreground mt-2">No new alerts</p>
                     <p className="text-xs text-muted-foreground">All cases are processed</p>
                   </div>
                 ) : (
-                  <div className="space-y-3">
+                  <div className="space-y-2">
                     {alerts.map((alert) => (
                       <div
                         key={alert.id}
-                        className="cursor-pointer rounded-lg border border-warning/30 bg-warning/5 p-3 transition-all duration-300 hover:shadow-sm"
+                        className="cursor-pointer rounded-lg border border-warning/30 bg-warning/5 p-2.5 transition-all duration-300 hover:shadow-sm"
                         onClick={() => navigate("/dashboard/alerts")}
                       >
                         <StatusBadge variant="pending">Pending</StatusBadge>
-                        <p className="mt-2 text-sm font-medium">{alert.policy_number}</p>
+                        <p className="mt-1.5 text-sm font-medium">{alert.policy_number}</p>
                         <p className="text-xs text-muted-foreground">{alert.client_name}</p>
-                        <p className="text-xs text-muted-foreground mt-1">Agent: {alert.agent_id}</p>
+                        <p className="text-xs text-muted-foreground mt-0.5">Agent: {alert.agent_id}</p>
                         {alert.remark && (
                           <p className="mt-1 text-xs text-warning flex items-center gap-1">
                             <AlertCircle className="h-3 w-3" />
@@ -830,7 +832,7 @@ export default function Dashboard() {
                         variant="ghost"
                         size="sm"
                         onClick={() => navigate("/dashboard/alerts")}
-                        className="w-full text-xs"
+                        className="w-full text-xs mt-1"
                       >
                         View All Alerts ({alerts.length})
                       </Button>
@@ -840,14 +842,14 @@ export default function Dashboard() {
               </CardContent>
             </Card>
 
-            {/* Active Contests Card */}
+            {/* Active Contests Card - Natural height (not stretched) */}
             <Card className="shadow-soft">
-              <CardHeader className="flex flex-row items-center gap-2">
+              <CardHeader className="flex flex-row items-center gap-2 pb-3">
                 <Trophy className="h-5 w-5 text-warning" />
                 <CardTitle className="text-lg font-semibold">Active Contests</CardTitle>
               </CardHeader>
               <CardContent>
-                <div className="space-y-3">
+                <div className="space-y-2">
                   {contests.map((contest) => {
                     const daysLeft = Math.ceil(
                       (new Date(contest.end_date).getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24)
@@ -855,20 +857,20 @@ export default function Dashboard() {
                     return (
                       <div
                         key={contest.id}
-                        className="cursor-pointer rounded-lg border p-3 transition-all duration-300 hover:bg-muted/50 hover:shadow-sm"
+                        className="cursor-pointer rounded-lg border p-2.5 transition-all duration-300 hover:bg-muted/50 hover:shadow-sm"
                         onClick={() => navigate("/dashboard/contests")}
                       >
                         <div className="flex items-center justify-between">
                           <div>
                             <p className="font-medium text-sm">{contest.name}</p>
-                            <div className="flex items-center gap-2 mt-1">
+                            <div className="flex items-center gap-2 mt-0.5">
                               <Timer className="h-3 w-3 text-muted-foreground" />
                               <p className="text-xs text-muted-foreground">
                                 Ends in {daysLeft} days
                               </p>
                             </div>
                             {contest.description && (
-                              <p className="text-xs text-muted-foreground mt-1">{contest.description}</p>
+                              <p className="text-xs text-muted-foreground mt-0.5">{contest.description}</p>
                             )}
                           </div>
                           <div className="text-right">
@@ -881,14 +883,14 @@ export default function Dashboard() {
                           </div>
                         </div>
                         {contest.progress !== undefined && (
-                          <div className="mt-3">
-                            <div className="flex justify-between text-xs mb-1">
+                          <div className="mt-2">
+                            <div className="flex justify-between text-xs mb-0.5">
                               <span className="text-muted-foreground">Progress</span>
                               <span className="font-medium text-primary">{contest.progress}%</span>
                             </div>
-                            <Progress value={contest.progress} className="h-1.5" />
+                            <Progress value={contest.progress} className="h-1" />
                             {contest.target && contest.achieved && (
-                              <p className="text-xs text-muted-foreground mt-1">
+                              <p className="text-xs text-muted-foreground mt-0.5">
                                 {formatAFYC(contest.achieved)} / {formatAFYC(contest.target)}
                               </p>
                             )}

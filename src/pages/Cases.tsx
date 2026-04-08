@@ -26,6 +26,14 @@ import {
   ChevronUp,
   CreditCard,
   FileSpreadsheet,
+  Sparkles,
+  TrendingUp,
+  Filter,
+  Database,
+  Clock,
+  CheckCircle2,
+  AlertCircle,
+  RefreshCw,
 } from "lucide-react";
 import { format, parseISO, isValid, subDays, subMonths, startOfToday, endOfToday, startOfMonth, endOfMonth } from "date-fns";
 import {
@@ -51,6 +59,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { toast } from "sonner";
+import { cn } from "@/lib/utils";
 import * as XLSX from "xlsx";
 
 interface Case {
@@ -108,7 +117,7 @@ const formatDisplayDate = (dateString: string | null): string => {
   return format(date, "dd MMM yyyy");
 };
 
-// Format AFYC without RM symbol
+// Format AFYC
 const formatAFYC = (value: number | null): string => {
   if (!value) return "0 AFYC";
   return `${value.toLocaleString('en-MY', {
@@ -150,6 +159,7 @@ export default function Cases() {
   const [hasMore, setHasMore] = useState(true);
   const [totalCount, setTotalCount] = useState(0);
   const [exporting, setExporting] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [filters, setFilters] = useState<Filters>({
     dateRange: { from: null, to: null },
     status: "all",
@@ -195,21 +205,25 @@ export default function Cases() {
     }
   }, [filters.dateRange]);
 
+  const refreshData = async () => {
+    setRefreshing(true);
+    await fetchInitialCases();
+    toast.success("Data refreshed");
+    setRefreshing(false);
+  };
+
   const fetchInitialCases = async () => {
     try {
       setLoading(true);
       setCurrentPage(1);
       
-      // Get total count first
       const { count: totalCount, error: countError } = await supabase
         .from("cases")
         .select('*', { count: 'exact', head: true });
 
       if (countError) throw countError;
       setTotalCount(totalCount || 0);
-      console.log("📊 Total cases in database:", totalCount);
 
-      // Fetch first page only
       const { data, error } = await supabase
         .from("cases")
         .select("*")
@@ -217,8 +231,6 @@ export default function Cases() {
         .range(0, PAGE_SIZE - 1);
 
       if (error) throw error;
-      
-      console.log(`📊 Fetched first page: ${data?.length} cases`);
 
       let finalCases = data || [];
       
@@ -299,7 +311,6 @@ export default function Cases() {
   const applyFilters = () => {
     let filtered = [...cases];
 
-    // Search filter
     if (filters.search) {
       const searchLower = filters.search.toLowerCase();
       filtered = filtered.filter(
@@ -310,17 +321,14 @@ export default function Cases() {
       );
     }
 
-    // Status filter
     if (filters.status !== "all") {
       filtered = filtered.filter((c) => c.status === filters.status);
     }
 
-    // Payment frequency filter
     if (filters.paymentFrequency !== "all") {
       filtered = filtered.filter((c) => c.payment_frequency === filters.paymentFrequency);
     }
 
-    // Date range filter
     if (filters.dateRange.from) {
       filtered = filtered.filter((c) => {
         const caseDate = parseDate(c.submission_date_timestamp);
@@ -455,7 +463,6 @@ export default function Cases() {
     try {
       const wb = XLSX.utils.book_new();
 
-      // ===== SHEET 1: Cover Page =====
       const coverData = [
         ["SUPERACHIEVER"],
         ["All Cases Report"],
@@ -482,7 +489,6 @@ export default function Cases() {
       wsCover['!cols'] = [{ wch: 50 }];
       XLSX.utils.book_append_sheet(wb, wsCover, "Cover");
 
-      // ===== SHEET 2: Cases Data =====
       const exportData = filteredCases.map((c, index) => ({
         "No.": index + 1,
         "Policy Number": c.policy_number,
@@ -502,20 +508,11 @@ export default function Cases() {
 
       const wsData = XLSX.utils.json_to_sheet(exportData);
       wsData['!cols'] = [
-        { wch: 6 },   // No.
-        { wch: 18 },  // Policy Number
-        { wch: 12 },  // Agent ID
-        { wch: 30 },  // Agent Name
-        { wch: 15 },  // Product
-        { wch: 15 },  // AFYC
-        { wch: 12 },  // Status
-        { wch: 15 },  // Submission Date
-        { wch: 15 },  // Enforce Date
-        { wch: 18 },  // Payment Frequency
+        { wch: 6 }, { wch: 18 }, { wch: 12 }, { wch: 30 }, { wch: 15 },
+        { wch: 15 }, { wch: 12 }, { wch: 15 }, { wch: 15 }, { wch: 18 },
       ];
       XLSX.utils.book_append_sheet(wb, wsData, "All Cases");
 
-      // ===== SHEET 3: Summary Statistics =====
       const approvedCount = filteredCases.filter(c => c.status === "approved").length;
       const pendingCount = filteredCases.filter(c => c.status === "pending").length;
       
@@ -533,113 +530,12 @@ export default function Cases() {
         { "Metric": "Status Breakdown", "Value": "" },
         { "Metric": "Approved Cases", "Value": `${approvedCount} (${filteredCases.length > 0 ? Math.round((approvedCount / filteredCases.length) * 100) : 0}%)` },
         { "Metric": "Pending Cases", "Value": `${pendingCount} (${filteredCases.length > 0 ? Math.round((pendingCount / filteredCases.length) * 100) : 0}%)` },
-        { "Metric": "", "Value": "" },
-        { "Metric": "Payment Frequency Breakdown", "Value": "" },
       ];
-      
-      // Add payment frequency breakdown
-      const frequencyMap = new Map<string, number>();
-      filteredCases.forEach(c => {
-        const freq = c.payment_frequency || "Not Specified";
-        frequencyMap.set(freq, (frequencyMap.get(freq) || 0) + 1);
-      });
-      
-      frequencyMap.forEach((count, freq) => {
-        summaryData.push({ "Metric": `  ${freq}`, "Value": `${count} cases (${Math.round((count / filteredCases.length) * 100)}%)` });
-      });
-      
-      summaryData.push(
-        { "Metric": "", "Value": "" },
-        { "Metric": "Filter Information", "Value": "" },
-        { "Metric": "Date Range From", "Value": filters.dateRange.from ? format(filters.dateRange.from, "dd MMM yyyy") : "All" },
-        { "Metric": "Date Range To", "Value": filters.dateRange.to ? format(filters.dateRange.to, "dd MMM yyyy") : "All" },
-        { "Metric": "Status Filter", "Value": filters.status === "all" ? "All Status" : filters.status },
-        { "Metric": "Payment Frequency Filter", "Value": filters.paymentFrequency === "all" ? "All Frequencies" : filters.paymentFrequency },
-        { "Metric": "Search Query", "Value": filters.search || "None" },
-      );
       
       const wsSummary = XLSX.utils.json_to_sheet(summaryData);
       wsSummary['!cols'] = [{ wch: 30 }, { wch: 30 }];
       XLSX.utils.book_append_sheet(wb, wsSummary, "Summary");
 
-      // ===== SHEET 4: Agent Performance =====
-      const agentPerformance = new Map<string, { name: string; cases: number; afyc: number }>();
-      filteredCases.forEach(c => {
-        if (!agentPerformance.has(c.agent_id)) {
-          agentPerformance.set(c.agent_id, { name: c.client_name, cases: 0, afyc: 0 });
-        }
-        const perf = agentPerformance.get(c.agent_id)!;
-        perf.cases += 1;
-        perf.afyc += c.premium || 0;
-      });
-      
-      const agentData = Array.from(agentPerformance.entries())
-        .map(([id, data]) => ({
-          "Rank": 0,
-          "Agent ID": id,
-          "Agent Name": data.name,
-          "Total Cases": data.cases,
-          "Total AFYC": `RM ${data.afyc.toLocaleString()}`,
-          "Average AFYC": `RM ${data.cases > 0 ? Math.round(data.afyc / data.cases).toLocaleString() : 0}`,
-        }))
-        .sort((a, b) => {
-          const afycA = parseInt(a["Total AFYC"].replace(/[^0-9]/g, ''));
-          const afycB = parseInt(b["Total AFYC"].replace(/[^0-9]/g, ''));
-          return afycB - afycA;
-        })
-        .map((item, idx) => ({ ...item, "Rank": idx + 1 }));
-      
-      const wsAgents = XLSX.utils.json_to_sheet(agentData);
-      wsAgents['!cols'] = [
-        { wch: 8 },   // Rank
-        { wch: 12 },  // Agent ID
-        { wch: 30 },  // Agent Name
-        { wch: 12 },  // Total Cases
-        { wch: 15 },  // Total AFYC
-        { wch: 15 },  // Average AFYC
-      ];
-      XLSX.utils.book_append_sheet(wb, wsAgents, "Agent Performance");
-
-      // ===== SHEET 5: Monthly Trend (if date range spans multiple months) =====
-      const monthlyTrend = new Map<string, { cases: number; afyc: number }>();
-      filteredCases.forEach(c => {
-        const date = parseDate(c.submission_date_timestamp);
-        if (date) {
-          const monthKey = format(date, "MMM yyyy");
-          if (!monthlyTrend.has(monthKey)) {
-            monthlyTrend.set(monthKey, { cases: 0, afyc: 0 });
-          }
-          const trend = monthlyTrend.get(monthKey)!;
-          trend.cases += 1;
-          trend.afyc += c.premium || 0;
-        }
-      });
-      
-      const trendData = Array.from(monthlyTrend.entries())
-        .map(([month, data]) => ({
-          "Month": month,
-          "Total Cases": data.cases,
-          "Total AFYC": `RM ${data.afyc.toLocaleString()}`,
-          "Average AFYC per Case": `RM ${data.cases > 0 ? Math.round(data.afyc / data.cases).toLocaleString() : 0}`,
-        }))
-        .sort((a, b) => {
-          const dateA = new Date(a.Month);
-          const dateB = new Date(b.Month);
-          return dateB.getTime() - dateA.getTime();
-        });
-      
-      if (trendData.length > 0) {
-        const wsTrend = XLSX.utils.json_to_sheet(trendData);
-        wsTrend['!cols'] = [
-          { wch: 15 },  // Month
-          { wch: 12 },  // Total Cases
-          { wch: 15 },  // Total AFYC
-          { wch: 20 },  // Average AFYC per Case
-        ];
-        XLSX.utils.book_append_sheet(wb, wsTrend, "Monthly Trend");
-      }
-
-      // Generate filename
       const dateStr = format(new Date(), "yyyyMMdd_HHmm");
       const filterStr = filters.status !== "all" ? `_${filters.status}` : "";
       const filename = `SuperAchiever_Cases_Report${filterStr}_${dateStr}.xlsx`;
@@ -662,15 +558,8 @@ export default function Cases() {
     }
 
     const headers = [
-      "Policy Number", 
-      "Agent ID", 
-      "Agent Name", 
-      "Product", 
-      "AFYC", 
-      "Status", 
-      "Submission Date",
-      "Enforce Date",
-      "Payment Frequency"
+      "Policy Number", "Agent ID", "Agent Name", "Product", "AFYC", 
+      "Status", "Submission Date", "Enforce Date", "Payment Frequency"
     ];
     
     const csvContent = [
@@ -708,29 +597,58 @@ export default function Cases() {
     return filteredCases.reduce((sum, c) => sum + (c.premium || 0), 0);
   };
 
-  if (isLoading) return <div className="min-h-screen flex items-center justify-center"><Loader2 className="animate-spin" /></div>;
+  if (isLoading) return (
+    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-50 to-slate-100">
+      <div className="text-center space-y-4 animate-fade-in">
+        <div className="relative">
+          <Loader2 className="h-16 w-16 animate-spin text-primary mx-auto" />
+          <div className="absolute inset-0 animate-ping rounded-full bg-primary/20" />
+        </div>
+        <p className="text-slate-500 font-medium animate-pulse">Loading Cases...</p>
+      </div>
+    </div>
+  );
+  
   if (!user) return <Navigate to="/auth" replace />;
 
   return (
     <DashboardLayout>
-      <div className="space-y-6">
-        {/* Header */}
-        <div className="flex justify-between items-center">
-          <div>
-            <h1 className="text-2xl font-bold tracking-tight">
-              {isAdmin ? "Global Case Management" : "My Cases"}
-            </h1>
-            <p className="text-sm text-muted-foreground mt-1">
-              {isAdmin ? "Full archive of all cases with advanced filtering" : "Your case history"}
-            </p>
+      <div className="space-y-6 animate-fade-in">
+        {/* Header with Animation */}
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+          <div className="space-y-1 animate-slide-in-right">
+            <div className="flex items-center gap-3">
+              <div className="p-2 rounded-xl bg-gradient-to-br from-primary/10 to-primary/5">
+                <Database className="h-8 w-8 text-primary" />
+              </div>
+              <div>
+                <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
+                  {isAdmin ? "Global Case Management" : "My Cases"}
+                  <Sparkles className="h-4 w-4 text-primary animate-pulse" />
+                </h1>
+                <p className="text-muted-foreground text-sm">
+                  {isAdmin ? "Full archive of all cases with advanced filtering" : "Your case history"}
+                </p>
+              </div>
+            </div>
           </div>
           
           {isAdmin && filteredCases.length > 0 && (
-            <div className="flex gap-2">
+            <div className="flex items-center gap-2 animate-slide-in-left">
+              <Button 
+                variant="outline" 
+                size="sm"
+                onClick={refreshData}
+                disabled={refreshing}
+                className="gap-2"
+              >
+                <RefreshCw className={cn("h-4 w-4", refreshing && "animate-spin")} />
+                Refresh
+              </Button>
               <Button 
                 onClick={handleExportStyledExcel} 
                 disabled={exporting}
-                className="flex gap-2 bg-gradient-to-r from-emerald-500 to-green-500 hover:from-emerald-600 hover:to-green-600 shadow-lg transition-all duration-300"
+                className="gap-2 bg-gradient-to-r from-emerald-500 to-green-500 hover:from-emerald-600 hover:to-green-600 shadow-lg transition-all duration-300 transform hover:scale-105 active:scale-95"
               >
                 {exporting ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
@@ -742,51 +660,88 @@ export default function Cases() {
               <Button 
                 onClick={handleExportCSV} 
                 variant="outline"
-                className="flex gap-2"
-                disabled={filteredCases.length === 0}
+                className="gap-2"
               >
                 <Download className="h-4 w-4" /> 
-                Export CSV
+                CSV
               </Button>
             </div>
           )}
         </div>
 
+        {/* Stats Cards */}
+        <div className="grid gap-4 md:grid-cols-4">
+          <Card className="border-none shadow-lg hover:shadow-xl transition-all duration-300 animate-fade-in-up bg-gradient-to-br from-blue-50 to-white">
+            <CardContent className="flex items-center gap-4 p-5">
+              <div className="rounded-xl bg-blue-100 p-3">
+                <Database className="h-6 w-6 text-blue-600" />
+              </div>
+              <div>
+                <p className="text-2xl font-black text-blue-900">{totalCount}</p>
+                <p className="text-[10px] font-bold text-blue-500 uppercase tracking-widest">Total Cases</p>
+              </div>
+            </CardContent>
+          </Card>
+          
+          <Card className="border-none shadow-lg hover:shadow-xl transition-all duration-300 animate-fade-in-up bg-gradient-to-br from-emerald-50 to-white" style={{ animationDelay: "0.1s" }}>
+            <CardContent className="flex items-center gap-4 p-5">
+              <div className="rounded-xl bg-emerald-100 p-3">
+                <CheckCircle2 className="h-6 w-6 text-emerald-600" />
+              </div>
+              <div>
+                <p className="text-2xl font-black text-emerald-900">{filteredCases.filter(c => c.status === "approved").length}</p>
+                <p className="text-[10px] font-bold text-emerald-500 uppercase tracking-widest">Approved</p>
+              </div>
+            </CardContent>
+          </Card>
+          
+          <Card className="border-none shadow-lg hover:shadow-xl transition-all duration-300 animate-fade-in-up bg-gradient-to-br from-amber-50 to-white" style={{ animationDelay: "0.2s" }}>
+            <CardContent className="flex items-center gap-4 p-5">
+              <div className="rounded-xl bg-amber-100 p-3">
+                <Clock className="h-6 w-6 text-amber-600" />
+              </div>
+              <div>
+                <p className="text-2xl font-black text-amber-900">{filteredCases.filter(c => c.status === "pending").length}</p>
+                <p className="text-[10px] font-bold text-amber-500 uppercase tracking-widest">Pending</p>
+              </div>
+            </CardContent>
+          </Card>
+          
+          <Card className="border-none shadow-lg hover:shadow-xl transition-all duration-300 animate-fade-in-up bg-gradient-to-br from-purple-50 to-white" style={{ animationDelay: "0.3s" }}>
+            <CardContent className="flex items-center gap-4 p-5">
+              <div className="rounded-xl bg-purple-100 p-3">
+                <TrendingUp className="h-6 w-6 text-purple-600" />
+              </div>
+              <div>
+                <p className="text-2xl font-black text-purple-900">{formatAFYC(calculateTotalPremium())}</p>
+                <p className="text-[10px] font-bold text-purple-500 uppercase tracking-widest">Total AFYC</p>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+
         {/* Search and Filter Bar */}
-        <div className="flex items-center gap-3 flex-wrap">
-          {/* Sort By Date Dropdown */}
+        <div className="flex flex-wrap items-center gap-3 p-4 bg-gradient-to-r from-slate-50 to-white rounded-xl border animate-fade-in-up" style={{ animationDelay: "0.4s" }}>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="outline" className="gap-2">
-                Sort by Date
+                <Calendar className="h-4 w-4" />
+                Date Range
                 <ChevronDown className="h-4 w-4" />
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="start" className="w-48">
-              <DropdownMenuLabel>Date Range</DropdownMenuLabel>
+              <DropdownMenuLabel>Presets</DropdownMenuLabel>
               <DropdownMenuSeparator />
-              <DropdownMenuItem onClick={() => handleDatePreset("any")}>
-                Any Date
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => handleDatePreset("today")}>
-                Today
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => handleDatePreset("yesterday")}>
-                Yesterday
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => handleDatePreset("thisMonth")}>
-                This Month
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => handleDatePreset("pastMonth")}>
-                Past Month
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => handleDatePreset("past3Months")}>
-                Past 3 Months
-              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => handleDatePreset("any")}>Any Date</DropdownMenuItem>
+              <DropdownMenuItem onClick={() => handleDatePreset("today")}>Today</DropdownMenuItem>
+              <DropdownMenuItem onClick={() => handleDatePreset("yesterday")}>Yesterday</DropdownMenuItem>
+              <DropdownMenuItem onClick={() => handleDatePreset("thisMonth")}>This Month</DropdownMenuItem>
+              <DropdownMenuItem onClick={() => handleDatePreset("pastMonth")}>Past Month</DropdownMenuItem>
+              <DropdownMenuItem onClick={() => handleDatePreset("past3Months")}>Past 3 Months</DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
 
-          {/* From Date with Calendar */}
           <Popover open={fromCalendarOpen} onOpenChange={setFromCalendarOpen}>
             <PopoverTrigger asChild>
               <div className="relative">
@@ -810,7 +765,6 @@ export default function Cases() {
             </PopoverContent>
           </Popover>
 
-          {/* To Date with Calendar */}
           <Popover open={toCalendarOpen} onOpenChange={setToCalendarOpen}>
             <PopoverTrigger asChild>
               <div className="relative">
@@ -834,34 +788,28 @@ export default function Cases() {
             </PopoverContent>
           </Popover>
 
-          {/* Clear Date Buttons */}
-          {filters.dateRange.from && (
+          {(filters.dateRange.from || filters.dateRange.to) && (
             <Button
               variant="ghost"
-              size="icon"
+              size="sm"
+              onClick={() => setFilters(prev => ({ ...prev, dateRange: { from: null, to: null } }))}
               className="h-8 w-8"
-              onClick={() => setFilters(prev => ({ ...prev, dateRange: { ...prev.dateRange, from: null } }))}
             >
               <X className="h-4 w-4" />
             </Button>
           )}
 
-          {/* Search Input */}
-          <div className="relative flex-1 max-w-md">
+          <div className="relative flex-1 min-w-[200px]">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
             <Input 
-              placeholder={isAdmin ? "Search by Policy, Client, or Agent ID..." : "Search by Policy or Client..."} 
+              placeholder="Search by Policy, Client, or Agent ID..." 
               className="pl-10"
               value={filters.search}
               onChange={(e) => setFilters(prev => ({ ...prev, search: e.target.value }))}
             />
           </div>
 
-          {/* Status Filter */}
-          <Select 
-            value={filters.status} 
-            onValueChange={(value) => setFilters(prev => ({ ...prev, status: value }))}
-          >
+          <Select value={filters.status} onValueChange={(value) => setFilters(prev => ({ ...prev, status: value }))}>
             <SelectTrigger className="w-32">
               <SelectValue placeholder="Status" />
             </SelectTrigger>
@@ -874,11 +822,7 @@ export default function Cases() {
             </SelectContent>
           </Select>
 
-          {/* Payment Frequency Filter */}
-          <Select 
-            value={filters.paymentFrequency} 
-            onValueChange={(value) => setFilters(prev => ({ ...prev, paymentFrequency: value }))}
-          >
+          <Select value={filters.paymentFrequency} onValueChange={(value) => setFilters(prev => ({ ...prev, paymentFrequency: value }))}>
             <SelectTrigger className="w-36">
               <SelectValue placeholder="Payment Freq" />
             </SelectTrigger>
@@ -891,137 +835,144 @@ export default function Cases() {
             </SelectContent>
           </Select>
 
-          {/* Clear Filters Button */}
           {getActiveFilterCount() > 0 && (
             <Button variant="ghost" size="sm" onClick={clearFilters} className="gap-2">
               <X className="h-4 w-4" />
-              Clear
+              Clear ({getActiveFilterCount()})
             </Button>
           )}
         </div>
 
         {/* Results Summary */}
-        <div className="flex justify-between items-center">
-          <div>
-            <span className="text-lg font-semibold">Showing {filteredCases.length} of {totalCount}</span>
-            <span className="text-muted-foreground ml-2">
+        <div className="flex justify-between items-center animate-fade-in-up" style={{ animationDelay: "0.5s" }}>
+          <div className="flex items-center gap-3">
+            <Badge variant="outline" className="px-3 py-1 text-sm font-bold">
+              <FileText className="h-3 w-3 mr-1" />
+              {filteredCases.length} of {totalCount} cases
+            </Badge>
+            <Badge variant="outline" className="px-3 py-1 text-sm font-bold bg-emerald-50 text-emerald-700 border-emerald-200">
+              <TrendingUp className="h-3 w-3 mr-1" />
               {formatAFYC(calculateTotalPremium())}
-            </span>
+            </Badge>
           </div>
           {filters.dateRange.from && filters.dateRange.to && (
-            <div className="text-sm text-muted-foreground">
-              {format(filters.dateRange.from, "MM-dd-yyyy")} - {format(filters.dateRange.to, "MM-dd-yyyy")}
+            <div className="text-sm text-muted-foreground flex items-center gap-1">
+              <Calendar className="h-3 w-3" />
+              {format(filters.dateRange.from, "dd MMM yyyy")} - {format(filters.dateRange.to, "dd MMM yyyy")}
             </div>
           )}
         </div>
 
         {/* Cases Table */}
-        <Card className="border-none shadow-soft">
+        <Card className="border-none shadow-xl overflow-hidden animate-fade-in-up" style={{ animationDelay: "0.6s" }}>
           <CardContent className="p-0">
             {loading ? (
               <div className="py-20 text-center">
                 <Loader2 className="animate-spin mx-auto h-8 w-8 text-primary" />
+                <p className="text-sm text-muted-foreground mt-2">Loading cases...</p>
               </div>
             ) : filteredCases.length === 0 ? (
-              <div className="py-20 text-center text-muted-foreground">
-                <FileText className="h-12 w-12 mx-auto mb-4 opacity-20" />
-                <p>No records found matching your filters.</p>
+              <div className="py-20 text-center">
+                <div className="relative w-24 h-24 mx-auto mb-4">
+                  <FileText className="h-16 w-16 mx-auto text-slate-300 opacity-30" />
+                  <div className="absolute inset-0 animate-ping rounded-full bg-slate-200/50" />
+                </div>
+                <p className="text-lg font-semibold text-slate-400">No cases found</p>
+                <p className="text-sm text-slate-400 mt-1">Try adjusting your filters</p>
                 {getActiveFilterCount() > 0 && (
-                  <Button variant="link" onClick={clearFilters}>
-                    Clear filters to see all cases
+                  <Button variant="link" onClick={clearFilters} className="mt-2">
+                    Clear all filters
                   </Button>
                 )}
               </div>
             ) : (
               <>
-                <Table>
-                  <TableHeader>
-                    <TableRow className="bg-slate-50/50">
-                      <TableHead className="font-bold">Submission Date</TableHead>
-                      <TableHead className="font-bold">Proposal No #</TableHead>
-                      {isAdmin && <TableHead className="font-bold">Agent ID</TableHead>}
-                      <TableHead className="font-bold">Agent Name</TableHead>
-                      <TableHead className="font-bold">Product</TableHead>
-                      <TableHead className="text-right font-bold">AFYC</TableHead>
-                      <TableHead className="font-bold">Payment Freq</TableHead>
-                      <TableHead className="font-bold">Status</TableHead>
-                      <TableHead className="font-bold">Enforce Date</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {filteredCases.map((item) => (
-                      <TableRow key={item.id} className="hover:bg-slate-50/50 transition-colors">
-                        <TableCell className="text-xs text-muted-foreground">
-                          {formatDisplayDate(item.submission_date_timestamp)}
-                        </TableCell>
-                        <TableCell className="font-mono text-xs font-bold">
-                          {item.policy_number}
-                        </TableCell>
-                        {isAdmin && (
-                          <TableCell className="text-xs">
-                            <span className="bg-primary/10 text-primary px-2 py-0.5 rounded font-bold uppercase">
-                              {item.agent_id}
-                            </span>
-                          </TableCell>
-                        )}
-                        <TableCell className="font-medium">{item.client_name}</TableCell>
-                        <TableCell className="text-muted-foreground text-xs">
-                          {item.product_type || "N/A"}
-                        </TableCell>
-                        <TableCell className="text-right font-bold">
-                          {formatAFYC(item.premium)}
-                        </TableCell>
-                        <TableCell>
-                          {item.payment_frequency ? (
-                            <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200">
-                              <CreditCard className="h-3 w-3 mr-1" />
-                              {item.payment_frequency}
-                            </Badge>
-                          ) : (
-                            <span className="text-muted-foreground text-xs">-</span>
-                          )}
-                        </TableCell>
-                        <TableCell>
-                          <StatusBadge variant={item.status === "approved" ? "approved" : "pending"}>
-                            {item.status}
-                          </StatusBadge>
-                        </TableCell>
-                        <TableCell className="text-xs text-muted-foreground">
-                          {formatDisplayDate(item.enforce_date)}
-                        </TableCell>
+                <div className="overflow-x-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow className="bg-gradient-to-r from-slate-50 to-white">
+                        <TableHead className="font-bold">Submission Date</TableHead>
+                        <TableHead className="font-bold">Proposal No #</TableHead>
+                        {isAdmin && <TableHead className="font-bold">Agent ID</TableHead>}
+                        <TableHead className="font-bold">Agent Name</TableHead>
+                        <TableHead className="font-bold">Product</TableHead>
+                        <TableHead className="text-right font-bold">AFYC</TableHead>
+                        <TableHead className="font-bold">Payment Freq</TableHead>
+                        <TableHead className="font-bold">Status</TableHead>
+                        <TableHead className="font-bold">Enforce Date</TableHead>
                       </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
+                    </TableHeader>
+                    <TableBody>
+                      {filteredCases.map((item, index) => (
+                        <TableRow 
+                          key={item.id} 
+                          className="hover:bg-slate-50/50 transition-colors group animate-slide-in-right"
+                          style={{ animationDelay: `${index * 20}ms` }}
+                        >
+                          <TableCell className="text-xs text-muted-foreground">
+                            {formatDisplayDate(item.submission_date_timestamp)}
+                          </TableCell>
+                          <TableCell className="font-mono text-xs font-bold">
+                            {item.policy_number}
+                          </TableCell>
+                          {isAdmin && (
+                            <TableCell className="text-xs">
+                              <span className="bg-primary/10 text-primary px-2 py-0.5 rounded font-bold uppercase">
+                                {item.agent_id}
+                              </span>
+                            </TableCell>
+                          )}
+                          <TableCell className="font-medium">{item.client_name}</TableCell>
+                          <TableCell className="text-muted-foreground text-xs">
+                            {item.product_type || "N/A"}
+                          </TableCell>
+                          <TableCell className="text-right font-bold">
+                            {formatAFYC(item.premium)}
+                          </TableCell>
+                          <TableCell>
+                            {item.payment_frequency ? (
+                              <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200">
+                                <CreditCard className="h-3 w-3 mr-1" />
+                                {item.payment_frequency}
+                              </Badge>
+                            ) : (
+                              <span className="text-muted-foreground text-xs">-</span>
+                            )}
+                          </TableCell>
+                          <TableCell>
+                            <StatusBadge variant={item.status === "approved" ? "approved" : "pending"}>
+                              {item.status}
+                            </StatusBadge>
+                          </TableCell>
+                          <TableCell className="text-xs text-muted-foreground">
+                            {formatDisplayDate(item.enforce_date)}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
 
-                {/* Load More Button */}
                 {hasMore && filteredCases.length === cases.length && (
                   <div className="flex justify-center py-6 border-t">
                     <Button
                       variant="outline"
                       onClick={loadMoreCases}
                       disabled={loadingMore}
-                      className="min-w-[200px]"
+                      className="min-w-[200px] gap-2"
                     >
                       {loadingMore ? (
                         <>
-                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                          <Loader2 className="h-4 w-4 animate-spin" />
                           Loading...
                         </>
                       ) : (
                         <>
-                          Load More
-                          <ChevronDown className="ml-2 h-4 w-4" />
+                          <ChevronDown className="h-4 w-4" />
+                          Load More Cases
                         </>
                       )}
                     </Button>
-                  </div>
-                )}
-
-                {/* Show message when filters are applied but not all data is loaded */}
-                {hasMore && filteredCases.length < cases.length && (
-                  <div className="text-center py-4 text-sm text-muted-foreground border-t">
-                    Filters are applied to currently loaded data. Load more to filter additional records.
                   </div>
                 )}
               </>
@@ -1029,6 +980,59 @@ export default function Cases() {
           </CardContent>
         </Card>
       </div>
+
+      <style>{`
+        @keyframes fade-in {
+          from { opacity: 0; }
+          to { opacity: 1; }
+        }
+        @keyframes fade-in-up {
+          from {
+            opacity: 0;
+            transform: translateY(20px);
+          }
+          to {
+            opacity: 1;
+            transform: translateY(0);
+          }
+        }
+        @keyframes slide-in-right {
+          from {
+            opacity: 0;
+            transform: translateX(20px);
+          }
+          to {
+            opacity: 1;
+            transform: translateX(0);
+          }
+        }
+        @keyframes slide-in-left {
+          from {
+            opacity: 0;
+            transform: translateX(-20px);
+          }
+          to {
+            opacity: 1;
+            transform: translateX(0);
+          }
+        }
+        
+        .animate-fade-in {
+          animation: fade-in 0.6s ease-out;
+        }
+        .animate-fade-in-up {
+          animation: fade-in-up 0.6s ease-out forwards;
+          opacity: 0;
+        }
+        .animate-slide-in-right {
+          animation: slide-in-right 0.5s ease-out forwards;
+          opacity: 0;
+        }
+        .animate-slide-in-left {
+          animation: slide-in-left 0.5s ease-out forwards;
+          opacity: 0;
+        }
+      `}</style>
     </DashboardLayout>
   );
 }
