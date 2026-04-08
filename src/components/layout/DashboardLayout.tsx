@@ -18,6 +18,8 @@ import {
   ChevronRight,
   Award,
   Newspaper,
+  Calendar,
+  Archive,
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -31,6 +33,7 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
+import { Badge } from "@/components/ui/badge";
 
 interface DashboardLayoutProps {
   children: ReactNode;
@@ -43,6 +46,9 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [contestsOpen, setContestsOpen] = useState(
     location.pathname.includes("/contests") || location.pathname.includes("/contest-memo")
+  );
+  const [casesOpen, setCasesOpen] = useState(
+    location.pathname.includes("/cases") || location.pathname.includes("/today-cases")
   );
 
   const isAdmin = role === "admin" || user?.email === "admin@superachiever.com";
@@ -91,8 +97,63 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
           {/* Navigation */}
           <nav className="flex-1 space-y-1 px-3 py-4">
             <NavItem href="/dashboard" icon={LayoutDashboard} label="Dashboard" currentPath={location.pathname} setSidebarOpen={setSidebarOpen} />
-            <NavItem href="/dashboard/cases" icon={FileText} label="Cases" currentPath={location.pathname} setSidebarOpen={setSidebarOpen} />
             
+            {/* Cases Dropdown/Collapsible */}
+            <Collapsible open={casesOpen} onOpenChange={setCasesOpen} className="w-full">
+              <CollapsibleTrigger asChild>
+                <button
+                  className={cn(
+                    "flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors hover:bg-sidebar-accent/50 hover:text-sidebar-foreground",
+                    (location.pathname.includes("/cases") || location.pathname.includes("/today-cases")) 
+                      ? "text-sidebar-foreground" 
+                      : "text-sidebar-foreground/70"
+                  )}
+                >
+                  <FileText className="h-5 w-5" />
+                  <span className="flex-1 text-left">Cases</span>
+                  <ChevronDown className={cn("h-4 w-4 transition-transform", casesOpen ? "rotate-0" : "-rotate-90")} />
+                </button>
+              </CollapsibleTrigger>
+              <CollapsibleContent className="space-y-1 px-4 pt-1">
+                <Link
+                  to="/dashboard/today-cases"
+                  onClick={() => setSidebarOpen(false)}
+                  className={cn(
+                    "flex items-center justify-between rounded-lg px-3 py-2 text-xs font-medium transition-colors",
+                    location.pathname === "/dashboard/today-cases"
+                      ? "bg-sidebar-accent text-sidebar-accent-foreground"
+                      : "text-sidebar-foreground/70 hover:bg-sidebar-accent/30 hover:text-sidebar-foreground"
+                  )}
+                >
+                  <div className="flex items-center gap-3">
+                    <Calendar className="h-4 w-4" />
+                    <span>Today's Cases</span>
+                  </div>
+                  <Badge variant="outline" className="text-[8px] px-1.5 py-0 bg-green-500/10 text-green-600 border-green-200">
+                    Daily
+                  </Badge>
+                </Link>
+                <Link
+                  to="/dashboard/cases"
+                  onClick={() => setSidebarOpen(false)}
+                  className={cn(
+                    "flex items-center justify-between rounded-lg px-3 py-2 text-xs font-medium transition-colors",
+                    location.pathname === "/dashboard/cases"
+                      ? "bg-sidebar-accent text-sidebar-accent-foreground"
+                      : "text-sidebar-foreground/70 hover:bg-sidebar-accent/30 hover:text-sidebar-foreground"
+                  )}
+                >
+                  <div className="flex items-center gap-3">
+                    <Archive className="h-4 w-4" />
+                    <span>All Cases</span>
+                  </div>
+                  <Badge variant="outline" className="text-[8px] px-1.5 py-0 bg-slate-500/10 text-slate-600 border-slate-200">
+                    Archive
+                  </Badge>
+                </Link>
+              </CollapsibleContent>
+            </Collapsible>
+
             {/* Contests Dropdown/Collapsible */}
             <Collapsible open={contestsOpen} onOpenChange={setContestsOpen} className="w-full">
               <CollapsibleTrigger asChild>

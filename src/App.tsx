@@ -15,6 +15,7 @@ import Reports from "./pages/Reports";
 import NAIS from "./pages/NAIS"; // 1. IMPORT THE NEW PAGE
 import NotFound from "./pages/NotFound";
 import ContestMemo from "./pages/ContestMemo";
+import TodayCases from "./pages/TodayCases";
 
 const queryClient = new QueryClient();
 
@@ -34,6 +35,7 @@ const App = () => (
             <Route path="/dashboard/leaderboards" element={<Leaderboards />} />
             <Route path="/dashboard/alerts" element={<Alerts />} />
             <Route path="/dashboard/reports" element={<Reports />} />
+            <Route path="/dashboard/today-cases" element={<TodayCases />} />
       
 
             {/* 2. ADD THE NAIS ROUTE HERE */}

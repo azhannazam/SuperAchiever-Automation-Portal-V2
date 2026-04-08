@@ -117,12 +117,8 @@ export default function Contests() {
         const p = profilesData.find(p => p.agent_code === id);
         const jDate = p?.join_date ? parseISO(p.join_date) : new Date(2020, 0, 1);
         return {
-          id,
-          value: stats.p1 + stats.p2,
-          enacP1: stats.p1,
-          enacP2: stats.p2,
-          designation: p?.rank || "PP",
-          category: isAfter(jDate, new Date(2025, 0, 1)) ? 'ROOKIE' : 'PP'
+          id, value: stats.p1 + stats.p2, enacP1: stats.p1, enacP2: stats.p2,
+          designation: p?.rank || "PP", category: isAfter(jDate, new Date(2025, 0, 1)) ? 'ROOKIE' : 'PP'
         };
       }).sort((a, b) => b.value - a.value);
 
@@ -162,6 +158,40 @@ export default function Contests() {
     setIsDialogOpen(true);
   };
 
+  const renderAdminLeaderboard = () => {
+    const list = activeContest === 'enac' ? enacLeaderboard.filter(a => a.category === activeSegment) : afycLeaderboard;
+    const unit = activeContest === 'enac' ? "Cases" : "RM";
+    
+    // Select image based on active contest
+    let bgImage = "/consistentclub.jpeg";
+    if (activeContest === 'experience') bgImage = "/danang.jpeg";
+    if (activeContest === 'rs') bgImage = "/surabaya.jpeg";
+    if (activeContest === 'enac') bgImage = "/enac.jpeg";
+
+    return (
+      <div className="flex flex-col">
+        <div className="p-10 text-white flex justify-between items-center relative overflow-hidden h-44"
+             style={{ backgroundImage: `url("${bgImage}")`, backgroundSize: 'cover', backgroundPosition: 'center' }}>
+          <div className="absolute inset-0 bg-slate-900/50 z-0" />
+          <div className="relative z-10">
+            <Badge className="bg-blue-600 mb-2 uppercase text-[10px] font-black">Admin Management</Badge>
+            <DialogTitle className="text-4xl font-black italic uppercase tracking-tighter">Leaderboard Standings</DialogTitle>
+          </div>
+          <div className="relative z-10 flex gap-1 bg-white/10 p-1 rounded-full border border-white/20 backdrop-blur-md">
+            {activeContest === 'enac' ? ["ROOKIE", "PP"].map(opt => (
+              <Button key={opt} onClick={() => setActiveSegment(opt)} className={`h-9 px-6 text-[10px] font-black rounded-full transition-all ${activeSegment === opt ? "bg-white text-slate-900" : "text-white/40"}`}>{opt}</Button>
+            )) : ["All"].map(opt => (
+              <Button key={opt} className="h-9 px-6 text-[10px] font-black rounded-full bg-white text-slate-900">{opt}</Button>
+            ))}
+          </div>
+        </div>
+        <div className="p-10">
+           <ContestLeaderboard list={list} unit={unit} currentAgentCode={agentData?.agent_code} isEnac={activeContest === 'enac'} />
+        </div>
+      </div>
+    );
+  };
+
   return (
     <DashboardLayout>
       {loading || !agentData ? (
@@ -170,32 +200,34 @@ export default function Contests() {
         <div className="relative p-6 space-y-10 max-w-[1400px] mx-auto min-h-screen transition-opacity duration-500">
           <header className="flex flex-col md:flex-row justify-between items-start md:items-end gap-4">
             <div className="space-y-1">
-              <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
-                Contest Page
-              </h1>
-              <p className="text-muted-foreground"> Contest Ranking for {agentData.full_name}</p>
+              <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">Contest Page</h1>
+              <p className="text-muted-foreground">Performance Ranking for {agentData.full_name}</p>
             </div>
           </header>
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-            <StatCard title="AIT Experience" image="/danang.jpeg" afyc={agentData.totalAfyc} target={100000} color="blue" onClick={() => openModal('experience')} />
-            <StatCard title="AIT RS 2026" image="/surabaya.jpeg" afyc={agentData.totalAfyc} target={60000} color="indigo" onClick={() => openModal('rs')} />
-            <StatCard title="eNAC 2026" image="/enac.jpeg" afyc={agentData.caseCount} target={agentData.category === 'ROOKIE' ? 8 : 26} unit="Cases" color="amber" onClick={() => openModal('enac')} />
-            <StatCard title="Consistent Club Rookie Year 1" image="/consistentclub.jpeg" afyc={agentData.totalAfyc} target={36000} color="emerald" onClick={() => openModal('consistent')} />
-            <StatCard title="Consistent Club" image="/consistentclub.jpeg" afyc={agentData.totalAfyc} target={30000} color="violet" onClick={() => openModal('consistentclub')} />
-            <StatCard title="Grow Big (Direct)" image="/consistentclub.jpeg" afyc={agentData.totalAfyc} target={90000} color="rose" onClick={() => openModal('growbig')} />
-            <StatCard title="Grow Big (Group)" image="/consistentclub.jpeg" afyc={agentData.totalAfyc} target={100000} color="sky" onClick={() => openModal('growbiggroup')} />
+            <StatCard title="AIT Experience" image="/danang.jpeg" target={100000} color="blue" onClick={() => openModal('experience')} isAdmin={isAdmin} currentAfyc={agentData.totalAfyc} leaderboard={afycLeaderboard} />
+            <StatCard title="AIT RS 2026" image="/surabaya.jpeg" target={60000} color="indigo" onClick={() => openModal('rs')} isAdmin={isAdmin} currentAfyc={agentData.totalAfyc} leaderboard={afycLeaderboard} />
+            <StatCard title="eNAC 2026" image="/enac.jpeg" target={agentData.category === 'ROOKIE' ? 8 : 26} unit="Cases" color="amber" onClick={() => openModal('enac')} isAdmin={isAdmin} currentAfyc={agentData.caseCount} leaderboard={enacLeaderboard} />
+            <StatCard title="Consistent Club Rookie Year 1" image="/consistentclub.jpeg" target={36000} color="emerald" onClick={() => openModal('consistent')} isAdmin={isAdmin} currentAfyc={agentData.totalAfyc} leaderboard={afycLeaderboard} />
+            <StatCard title="Consistent Club" image="/consistentclub.jpeg" target={30000} color="violet" onClick={() => openModal('consistentclub')} isAdmin={isAdmin} currentAfyc={agentData.totalAfyc} leaderboard={afycLeaderboard} />
+            <StatCard title="Grow Big (Direct)" image="/consistentclub.jpeg" target={90000} color="rose" onClick={() => openModal('growbig')} isAdmin={isAdmin} currentAfyc={agentData.totalAfyc} leaderboard={afycLeaderboard} />
+            <StatCard title="Grow Big (Group)" image="/consistentclub.jpeg" target={100000} color="sky" onClick={() => openModal('growbiggroup')} isAdmin={isAdmin} currentAfyc={agentData.totalAfyc} leaderboard={afycLeaderboard} />
           </div>
 
           <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
             <DialogContent className="sm:max-w-[950px] p-0 border-none rounded-[2.5rem] bg-white shadow-2xl overflow-hidden">
-              {activeContest === 'enac' && <ENACView data={agentData} segment={activeSegment} setSegment={setActiveSegment} leaderboard={enacLeaderboard} />}
-              {activeContest === 'experience' && <ExperienceView data={agentData} segment={activeSegment} setSegment={setActiveSegment} leaderboard={afycLeaderboard} allProfiles={allProfiles} />}
-              {activeContest === 'rs' && <RSView data={agentData} segment={activeSegment} setSegment={setActiveSegment} leaderboard={afycLeaderboard} />}
-              {activeContest === 'consistent' && <ConsistentView data={agentData} segment={activeSegment} setSegment={setActiveSegment} leaderboard={afycLeaderboard} />}
-              {activeContest === 'consistentclub' && <ConsistentClubView data={agentData} segment={activeSegment} setSegment={setActiveSegment} leaderboard={afycLeaderboard} />}
-              {activeContest === 'growbig' && <GrowBigView data={agentData} segment={activeSegment} setSegment={setActiveSegment} leaderboard={afycLeaderboard} />}
-              {activeContest === 'growbiggroup' && <GrowBigGroupView data={agentData} segment={activeSegment} setSegment={setActiveSegment} leaderboard={afycLeaderboard} />}
+              {isAdmin ? renderAdminLeaderboard() : (
+                <>
+                  {activeContest === 'enac' && <ENACView data={agentData} segment={activeSegment} setSegment={setActiveSegment} leaderboard={enacLeaderboard} />}
+                  {activeContest === 'experience' && <ExperienceView data={agentData} segment={activeSegment} setSegment={setActiveSegment} leaderboard={afycLeaderboard} allProfiles={allProfiles} />}
+                  {activeContest === 'rs' && <RSView data={agentData} segment={activeSegment} setSegment={setActiveSegment} leaderboard={afycLeaderboard} />}
+                  {activeContest === 'consistent' && <ConsistentView data={agentData} segment={activeSegment} setSegment={setActiveSegment} leaderboard={afycLeaderboard} />}
+                  {activeContest === 'consistentclub' && <ConsistentClubView data={agentData} segment={activeSegment} setSegment={setActiveSegment} leaderboard={afycLeaderboard} />}
+                  {activeContest === 'growbig' && <GrowBigView data={agentData} segment={activeSegment} setSegment={setActiveSegment} leaderboard={afycLeaderboard} />}
+                  {activeContest === 'growbiggroup' && <GrowBigGroupView data={agentData} segment={activeSegment} setSegment={setActiveSegment} leaderboard={afycLeaderboard} />}
+                </>
+              )}
               <div className="p-6 bg-slate-50 border-t flex justify-center">
                 <Button onClick={() => setIsDialogOpen(false)} variant="ghost" className="rounded-full px-10 font-black text-[11px] uppercase tracking-[0.2em] text-slate-400">Close</Button>
               </div>
@@ -207,31 +239,79 @@ export default function Contests() {
   );
 }
 
-// --- 4. DYNAMIC MODAL VIEWS ---
+// --- SHARED UI ---
+
+function StatCard({ title, icon, image, target, onClick, unit = "RM", color, isAdmin, currentAfyc, leaderboard }: any) {
+  const colorMap: any = { blue: "bg-blue-600", indigo: "bg-indigo-600", amber: "bg-amber-500", emerald: "bg-emerald-600", rose: "bg-rose-600", sky: "bg-sky-600", violet: "bg-violet-600" };
+  
+  const winnersCount = useMemo(() => {
+    if (!isAdmin || !leaderboard) return 0;
+    return leaderboard.filter((agent: any) => agent.value >= target).length;
+  }, [isAdmin, leaderboard, target]);
+
+  const progress = Math.min(100, (currentAfyc / target) * 100);
+
+  return (
+    <Card onClick={onClick} className="group relative cursor-pointer border-none bg-white rounded-[2rem] shadow-sm hover:shadow-2xl transition-all duration-500 transform hover:-translate-y-2 overflow-hidden">
+      <CardContent className="p-8">
+        <div className="flex justify-between items-start mb-10">
+          <div className={`p-4 ${colorMap[color]} text-white rounded-2xl shadow-lg relative overflow-hidden h-14 w-14 flex items-center justify-center`}>
+            {image ? <img src={image} alt={title} className="absolute inset-0 w-full h-full object-cover opacity-90 transition-opacity hover:opacity-100" /> : icon}
+          </div>
+          <Badge variant="ghost" className="text-emerald-500 font-bold text-[10px] uppercase tracking-widest leading-none">Active</Badge>
+        </div>
+        
+        <div className="mb-8">
+          <h3 className="text-xl font-black text-slate-900 leading-tight">{title}</h3>
+          <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest leading-none">Campaign 2026</p>
+        </div>
+
+        {isAdmin ? (
+          <div className="pt-4 border-t border-slate-50 flex items-center gap-3">
+            <div className="h-10 w-10 rounded-full bg-emerald-50 flex items-center justify-center text-emerald-600">
+               <Users className="h-5 w-5" />
+            </div>
+            <div>
+              <p className="text-[10px] text-slate-400 font-bold uppercase tracking-tight">Total Qualified</p>
+              <p className="text-xl font-black text-slate-900">{winnersCount} Agents</p>
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            <div className="flex justify-between items-end">
+              <div className="text-2xl font-black text-slate-900">{unit === "RM" ? "RM" : ""} {currentAfyc.toLocaleString()}</div>
+              <div className="text-[10px] font-bold text-slate-400">/ {target.toLocaleString()}</div>
+            </div>
+            <div className="h-2 w-full bg-slate-100 rounded-full overflow-hidden">
+              <div className={`h-full ${colorMap[color]} transition-all duration-1000`} style={{ width: `${progress}%` }} />
+            </div>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+// --- REMAINING DYNAMIC VIEWS ---
 
 function ExperienceView({ data, segment, setSegment, leaderboard, allProfiles }: any) {
   const isRookie = data.category === 'ROOKIE';
   const passedPreReq = isRookie ? (data.janAfyc >= 5000 && data.febAfyc >= 5000) : (data.janAfyc >= 10000 && data.febAfyc >= 10000);
-
-  const filteredLeaderboard = useMemo(() => {
-    return leaderboard.filter((agent: any) => {
-      const p = allProfiles.find((ap: any) => ap.agent_code === agent.id);
-      if (segment === "All") return true;
-      if (!p) return false;
-      const rank = p.rank?.toLowerCase();
-      if (segment === "PP") return rank === "agent";
-      if (segment === "AD") return rank === "ad" || rank === "agency director";
-      if (segment === "GAD") return rank === "gad" || rank === "group agency director";
-      return true;
-    });
-  }, [segment, leaderboard, allProfiles]);
+  const filtered = useMemo(() => leaderboard.filter((agent: any) => {
+    const p = allProfiles.find((ap: any) => ap.agent_code === agent.id);
+    if (segment === "All") return true;
+    if (!p) return false;
+    const rank = p.rank?.toLowerCase();
+    if (segment === "PP") return rank === "agent";
+    if (segment === "AD") return rank === "ad" || rank === "agency director";
+    if (segment === "GAD") return rank === "gad" || rank === "group agency director";
+    return true;
+  }), [segment, leaderboard, allProfiles]);
 
   return (
     <div className="flex flex-col">
-      <div 
-        className="p-10 text-white flex justify-between items-center relative overflow-hidden h-44"
-        style={{ backgroundImage: 'url("/danang.jpeg")', backgroundSize: 'cover', backgroundPosition: 'center 40%' }}
-      >
+      <div className="p-10 text-white flex justify-between items-center relative overflow-hidden h-44"
+        style={{ backgroundImage: 'url("/danang.jpeg")', backgroundSize: 'cover', backgroundPosition: 'center 40%' }}>
         <div className="absolute inset-0 bg-slate-900/50 z-0" />
         <div className="relative z-10">
           <Badge className="bg-blue-600 mb-2 border-none px-3 py-1 rounded-md text-[10px] font-black uppercase tracking-widest leading-none">AIT Experience 2026</Badge>
@@ -247,18 +327,15 @@ function ExperienceView({ data, segment, setSegment, leaderboard, allProfiles }:
         <div className="space-y-6">
           <div className="p-8 bg-blue-50/50 border border-blue-100 rounded-[2rem]">
             <h4 className="text-[10px] font-black text-blue-600 uppercase tracking-widest mb-4 border-b border-blue-100 pb-2">Qualification Status</h4>
-            <div className="space-y-1">
-              <CheckItem label="Pre-requisite (Jan & Feb Production)" done={passedPreReq} />
-              <CheckItem label="Minimum AFYC: RM 100,000" done={data.totalAfyc >= 100000} />
-            </div>
+            <CheckItem label="Pre-requisite (Jan & Feb Production)" done={passedPreReq} />
+            <CheckItem label="Minimum AFYC: RM 100,000" done={data.totalAfyc >= 100000} />
           </div>
           <div className="p-8 bg-slate-900 rounded-[2rem] text-center shadow-xl border border-slate-800">
              <Plane className="w-8 h-8 text-blue-400 mx-auto mb-3 opacity-80" />
-             <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest mb-1">Campaign Prize</p>
              <h2 className="text-3xl font-black text-white italic tracking-tighter uppercase leading-tight">AIT Experience Trip 2026</h2>
           </div>
         </div>
-        <ContestLeaderboard list={filteredLeaderboard} currentAgentCode={data.agent_code} />
+        <ContestLeaderboard list={filtered} currentAgentCode={data.agent_code} />
       </div>
     </div>
   );
@@ -269,10 +346,8 @@ function RSView({ data, segment, setSegment, leaderboard }: any) {
   const targetAfyc = isL1 ? 30000 : 60000;
   return (
     <div className="flex flex-col">
-      <div 
-        className="p-10 text-white flex justify-between items-center relative overflow-hidden h-44"
-        style={{ backgroundImage: 'url("/surabaya.jpeg")', backgroundSize: 'cover', backgroundPosition: 'center 40%' }}
-      >
+      <div className="p-10 text-white flex justify-between items-center relative overflow-hidden h-44"
+        style={{ backgroundImage: 'url("/surabaya.jpeg")', backgroundSize: 'cover', backgroundPosition: 'center 40%' }}>
         <div className="absolute inset-0 bg-slate-900/50 z-0" />
         <div className="relative z-10">
           <Badge className="bg-blue-600 mb-2 border-none px-3 py-1 rounded-md text-[10px] font-black uppercase tracking-widest leading-none">AIT RS 2026</Badge>
@@ -288,10 +363,8 @@ function RSView({ data, segment, setSegment, leaderboard }: any) {
         <div className="space-y-6">
           <div className="p-8 bg-indigo-50/50 border border-indigo-100 rounded-[2rem]">
             <h4 className="text-[10px] font-black text-indigo-600 uppercase tracking-widest mb-4 border-b border-indigo-100 pb-2">{isL1 ? "Level 1 Requirements" : "Level 2 Requirements"}</h4>
-            <div className="space-y-1">
-              <CheckItem label={`Minimum AFYC: RM ${targetAfyc.toLocaleString()}`} done={data.totalAfyc >= targetAfyc} />
-              <CheckItem label={`Minimum Number of Cases: ${isL1 ? 3 : 6}`} done={data.caseCount >= (isL1 ? 3 : 6)} />
-            </div>
+            <CheckItem label={`Minimum AFYC: RM ${targetAfyc.toLocaleString()}`} done={data.totalAfyc >= targetAfyc} />
+            <CheckItem label={`Minimum Number of Cases: ${isL1 ? 3 : 6}`} done={data.caseCount >= (isL1 ? 3 : 6)} />
           </div>
           <div className="p-8 bg-slate-900 rounded-[2rem] text-center shadow-xl border border-slate-800">
              <Gift className="w-8 h-8 text-amber-400 mx-auto mb-3 opacity-80" />
@@ -305,13 +378,10 @@ function RSView({ data, segment, setSegment, leaderboard }: any) {
 }
 
 function ENACView({ data, segment, setSegment, leaderboard }: any) {
-  const filteredLeaderboard = leaderboard.filter((agent: any) => agent.category === segment);
   return (
     <div className="flex flex-col">
-      <div 
-        className="p-10 text-white flex justify-between items-center relative overflow-hidden h-44"
-        style={{ backgroundImage: 'url("/enac.jpeg")', backgroundSize: 'cover', backgroundPosition: 'center 40%' }}
-      >
+      <div className="p-10 text-white flex justify-between items-center relative overflow-hidden h-44"
+        style={{ backgroundImage: 'url("/enac.jpeg")', backgroundSize: 'cover', backgroundPosition: 'center 40%' }}>
         <div className="absolute inset-0 bg-slate-900/50 z-0" />
         <div className="relative z-10">
           <Badge className="bg-blue-600 mb-2 border-none px-3 py-1 rounded-md text-[10px] font-black uppercase tracking-widest leading-none">eNAC 2026</Badge>
@@ -334,11 +404,10 @@ function ENACView({ data, segment, setSegment, leaderboard }: any) {
           </div>
           <div className="bg-slate-900 rounded-[2rem] p-8 text-center shadow-xl">
              <Ticket className="w-10 h-10 text-blue-500 mx-auto mb-2 opacity-50" />
-             <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest mb-1">Qualified Ticket</p>
              <p className="text-4xl font-black text-white italic leading-tight uppercase">{getQualifiedTicket(data.enacPeriod1, data.enacPeriod2, data.category)}</p>
           </div>
         </div>
-        <ContestLeaderboard list={filteredLeaderboard} unit="Cases" currentAgentCode={data.agent_code} isEnac={true} />
+        <ContestLeaderboard list={leaderboard.filter((a:any) => a.category === segment)} unit="Cases" currentAgentCode={data.agent_code} isEnac={true} />
       </div>
     </div>
   );
@@ -347,10 +416,8 @@ function ENACView({ data, segment, setSegment, leaderboard }: any) {
 function ConsistentClubView({ data, segment, setSegment, leaderboard }: any) {
   return (
     <div className="flex flex-col">
-      <div 
-        className="p-10 text-white flex justify-between items-center relative overflow-hidden h-44"
-        style={{ backgroundImage: 'url("/consistentclub.jpeg")', backgroundSize: 'cover', backgroundPosition: 'center' }}
-      >
+      <div className="p-10 text-white flex justify-between items-center relative overflow-hidden h-44"
+        style={{ backgroundImage: 'url("/consistentclub.jpeg")', backgroundSize: 'cover', backgroundPosition: 'center' }}>
         <div className="absolute inset-0 bg-slate-900/50 z-0" />
         <div className="relative z-10">
           <Badge className="bg-violet-600 mb-2 border-none px-3 py-1 rounded-md text-[10px] font-black uppercase tracking-widest leading-none">Consistent Club</Badge>
@@ -384,13 +451,10 @@ function ConsistentClubView({ data, segment, setSegment, leaderboard }: any) {
 
 function GrowBigGroupView({ data, segment, setSegment, leaderboard }: any) {
   const isMonthly = segment === "Monthly";
-
   return (
     <div className="flex flex-col">
-      <div 
-        className="p-10 text-white flex justify-between items-center relative overflow-hidden h-44"
-        style={{ backgroundImage: 'url("/consistentclub.jpeg")', backgroundSize: 'cover', backgroundPosition: 'center' }}
-      >
+      <div className="p-10 text-white flex justify-between items-center relative overflow-hidden h-44"
+        style={{ backgroundImage: 'url("/consistentclub.jpeg")', backgroundSize: 'cover', backgroundPosition: 'center' }}>
         <div className="absolute inset-0 bg-slate-900/50 z-0" />
         <div className="relative z-10">
           <Badge className="bg-sky-600 mb-2 border-none px-3 py-1 rounded-md text-[10px] font-black uppercase tracking-widest leading-none">Grow Big With Quality (Group)</Badge>
@@ -406,35 +470,25 @@ function GrowBigGroupView({ data, segment, setSegment, leaderboard }: any) {
         <div className="space-y-6">
           <div className="p-8 bg-sky-50/50 border border-sky-100 rounded-[2rem]">
             <h4 className="text-[10px] font-black text-sky-600 uppercase tracking-widest mb-4 border-b border-sky-100 pb-2">{segment} Prize Requirements</h4>
-            
             <div className="space-y-6">
-              {/* Prize Tiers for Group Category */}
               <div className="space-y-2">
-                <div className="flex justify-between items-center bg-white p-3 rounded-xl border border-sky-100 shadow-sm">
-                  <span className="text-xs font-bold text-slate-900">1st Prize: {isMonthly ? "RM 30,000" : "RM 90,000"}</span>
-                </div>
+                <div className="flex justify-between items-center bg-white p-3 rounded-xl border border-sky-100 shadow-sm"><span className="text-xs font-bold text-slate-900">1st Prize: {isMonthly ? "RM 30,000" : "RM 90,000"}</span></div>
                 <ul className="text-[10px] space-y-1 text-slate-500 ml-2">
                   <li>• AFYC Increment: {isMonthly ? "40% or RM 600,000 (Higher)" : "40% or RM 2,000,000 (Higher)"}</li>
                   <li>• Min. Active Agents: 20 {isMonthly ? "" : "Monthly"}</li>
                   <li>• Min. New Recruits: {isMonthly ? "20" : "70"}</li>
                 </ul>
               </div>
-
               <div className="space-y-2">
-                <div className="flex justify-between items-center bg-white p-3 rounded-xl border border-sky-100 shadow-sm">
-                  <span className="text-xs font-bold text-slate-900">2nd Prize: {isMonthly ? "RM 20,000" : "RM 60,000"}</span>
-                </div>
+                <div className="flex justify-between items-center bg-white p-3 rounded-xl border border-sky-100 shadow-sm"><span className="text-xs font-bold text-slate-900">2nd Prize: {isMonthly ? "RM 20,000" : "RM 60,000"}</span></div>
                 <ul className="text-[10px] space-y-1 text-slate-500 ml-2">
                   <li>• AFYC Increment: {isMonthly ? "30% or RM 400,000 (Higher)" : "30% or RM 1,500,000 (Higher)"}</li>
                   <li>• Min. Active Agents: 15 {isMonthly ? "" : "Monthly"}</li>
                   <li>• Min. New Recruits: {isMonthly ? "12" : "20"}</li>
                 </ul>
               </div>
-
               <div className="space-y-2">
-                <div className="flex justify-between items-center bg-white p-3 rounded-xl border border-sky-100 shadow-sm">
-                  <span className="text-xs font-bold text-slate-900">3rd Prize: {isMonthly ? "RM 10,000" : "RM 30,000"}</span>
-                </div>
+                <div className="flex justify-between items-center bg-white p-3 rounded-xl border border-sky-100 shadow-sm"><span className="text-xs font-bold text-slate-900">3rd Prize: {isMonthly ? "RM 10,000" : "RM 30,000"}</span></div>
                 <ul className="text-[10px] space-y-1 text-slate-500 ml-2">
                   <li>• AFYC Increment: {isMonthly ? "20% or RM 200,000 (Higher)" : "20% or RM 700,000 (Higher)"}</li>
                   <li>• Min. Active Agents: 8 {isMonthly ? "" : "Monthly"}</li>
@@ -442,6 +496,11 @@ function GrowBigGroupView({ data, segment, setSegment, leaderboard }: any) {
                 </ul>
               </div>
             </div>
+          </div>
+          <div className="p-8 bg-slate-900 rounded-[2rem] text-center shadow-xl border border-slate-800">
+             <Trophy className="w-8 h-8 text-sky-400 mx-auto mb-3 opacity-80" />
+             <h2 className="text-3xl font-black text-white italic tracking-tighter uppercase leading-tight">Elite Group Awards</h2>
+             <p className="text-[9px] text-slate-400 mt-2 font-bold uppercase border-t border-slate-800 pt-4 tracking-widest">Leaders under NALIS are excluded</p>
           </div>
         </div>
         <ContestLeaderboard list={leaderboard} currentAgentCode={data.agent_code} />
@@ -477,7 +536,6 @@ function GrowBigView({ data, segment, setSegment, leaderboard }: any) {
             <h4 className="text-[10px] font-black text-rose-600 uppercase tracking-widest mb-4 border-b border-rose-100 pb-2">{segment} Prize Requirements</h4>
             
             <div className="space-y-6">
-              {/* Prize Tiers for Direct Category */}
               <div className="space-y-2">
                 <div className="flex justify-between items-center bg-white p-3 rounded-xl border border-rose-100 shadow-sm">
                   <span className="text-xs font-bold text-slate-900">1st Prize: {isMonthly ? "RM 30,000" : "RM 90,000"}</span>
@@ -488,7 +546,6 @@ function GrowBigView({ data, segment, setSegment, leaderboard }: any) {
                   <li>• Min. New Recruits: {isMonthly ? "10" : "35"}</li>
                 </ul>
               </div>
-
               <div className="space-y-2">
                 <div className="flex justify-between items-center bg-white p-3 rounded-xl border border-rose-100 shadow-sm">
                   <span className="text-xs font-bold text-slate-900">2nd Prize: {isMonthly ? "RM 20,000" : "RM 60,000"}</span>
@@ -499,7 +556,6 @@ function GrowBigView({ data, segment, setSegment, leaderboard }: any) {
                   <li>• Min. New Recruits: {isMonthly ? "6" : "20"}</li>
                 </ul>
               </div>
-
               <div className="space-y-2">
                 <div className="flex justify-between items-center bg-white p-3 rounded-xl border border-rose-100 shadow-sm">
                   <span className="text-xs font-bold text-slate-900">3rd Prize: {isMonthly ? "RM 10,000" : "RM 30,000"}</span>
@@ -512,74 +568,15 @@ function GrowBigView({ data, segment, setSegment, leaderboard }: any) {
               </div>
             </div>
           </div>
+          <div className="p-8 bg-slate-900 rounded-[2rem] text-center shadow-xl border border-slate-800">
+             <Sparkles className="w-8 h-8 text-rose-400 mx-auto mb-3 opacity-80" />
+             <h2 className="text-3xl font-black text-white italic tracking-tighter uppercase leading-tight">Top Growth Awards</h2>
+             <p className="text-[9px] text-slate-400 mt-2 font-bold uppercase border-t border-slate-800 pt-4 tracking-widest">Leaders under NALIS are excluded</p>
+          </div>
         </div>
         <ContestLeaderboard list={leaderboard} currentAgentCode={data.agent_code} />
       </div>
     </div>
-  );
-}
-
-function ConsistentView({ data, segment, setSegment, leaderboard }: any) {
-    const isT2 = segment === "Tier 2";
-    const totalM0toM3 = (data.monthlyCounts[0] || 0) + (data.monthlyCounts[1] || 0) + (data.monthlyCounts[2] || 0) + (data.monthlyCounts[3] || 0);
-    const expectedReward = data.totalAfyc * 0.01;
-
-    return (
-      <div className="flex flex-col">
-        <div 
-          className="p-10 text-white flex justify-between items-center relative overflow-hidden h-44"
-          style={{ backgroundImage: 'url("/consistentclub.jpeg")', backgroundSize: 'cover', backgroundPosition: 'center' }}
-        >
-          <div className="absolute inset-0 bg-slate-900/50 z-0" />
-          <div className="relative z-10">
-            <Badge className="bg-blue-600 mb-2 border-none px-3 py-1 rounded-md text-[10px] font-black uppercase tracking-widest leading-none">Consistent Club Rookie Year 1</Badge>
-            <DialogTitle className="text-4xl font-black italic tracking-tighter leading-tight">Consistency Tracker</DialogTitle>
-          </div>
-          <div className="relative z-50 flex gap-1 bg-white/10 p-1 rounded-full border border-white/20 backdrop-blur-md">
-            {["Tier 1", "Tier 2"].map((opt) => (
-              <Button key={opt} onClick={() => setSegment(opt)} className={`h-9 px-6 text-[10px] font-black rounded-full transition-all ${segment === opt ? "bg-white text-slate-900 shadow-xl" : "bg-transparent text-white/40 hover:text-white"}`}>{opt}</Button>
-            ))}
-          </div>
-        </div>
-        <div className="p-10 grid md:grid-cols-2 gap-10">
-          <div className="space-y-6">
-            <div className="p-8 bg-indigo-50/50 border border-indigo-100 rounded-[2rem]">
-              <h4 className="text-[10px] font-black text-indigo-600 uppercase tracking-widest mb-4 border-b border-indigo-100 pb-2">{isT2 ? "Tier 2 Requirement" : "Tier 1 Requirement"}</h4>
-              <div className="space-y-1">
-                 <CheckItem label="M1 Goal (3 Cases)" done={data.monthlyCounts[0] >= 3} />
-              </div>
-            </div>
-            <div className="p-8 bg-slate-900 rounded-[2rem] text-center shadow-xl border border-slate-800">
-                <Zap className="w-8 h-8 text-amber-400 mx-auto mb-3 opacity-80" />
-                <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest mb-1">Estimated Club Bonus</p>
-                <h2 className="text-4xl font-black text-emerald-400 tracking-tighter">RM {expectedReward.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</h2>
-            </div>
-          </div>
-          <ContestLeaderboard list={leaderboard} currentAgentCode={data.agent_code} />
-        </div>
-      </div>
-    );
-}
-
-// --- SHARED UI ---
-function StatCard({ title, icon, image, afyc, target, onClick, unit = "RM", color }: any) {
-  const progress = Math.min(100, (afyc / target) * 100);
-  const colorMap: any = { blue: "bg-blue-600", indigo: "bg-indigo-600", amber: "bg-amber-500", emerald: "bg-emerald-600", rose: "bg-rose-600", sky: "bg-sky-600", violet: "bg-violet-600" };
-  return (
-    <Card onClick={onClick} className="group relative cursor-pointer border-none bg-white rounded-[2rem] shadow-sm hover:shadow-2xl transition-all duration-500 transform hover:-translate-y-2 overflow-hidden">
-      <CardContent className="p-8">
-        <div className="flex justify-between items-start mb-10">
-          <div className={`p-4 ${colorMap[color]} text-white rounded-2xl shadow-lg relative overflow-hidden h-14 w-14 flex items-center justify-center`}>
-            {image ? (
-               <img src={image} alt={title} className="absolute inset-0 w-full h-full object-cover opacity-90 transition-opacity hover:opacity-100" />
-            ) : icon}
-          </div>
-          <Badge variant="ghost" className="text-emerald-500 font-bold text-[10px] uppercase tracking-widest leading-none">Active</Badge>
-        </div>
-        <div className="mb-8"><h3 className="text-xl font-black text-slate-900 tracking-tight leading-tight">{title}</h3><p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest leading-none">Campaign 2026</p></div>
-        <div className="space-y-4"><div className="flex justify-between items-end"><div className="text-2xl font-black text-slate-900">{unit === "RM" ? "RM" : ""} {afyc.toLocaleString()}</div><div className="text-[10px] font-bold text-slate-400">/ {target.toLocaleString()}</div></div><div className="h-2 w-full bg-slate-100 rounded-full overflow-hidden"><div className={`h-full ${colorMap[color]} transition-all duration-1000`} style={{ width: `${progress}%` }} /></div></div>
-      </CardContent>
-    </Card>
   );
 }
 
@@ -609,10 +606,9 @@ function ContestLeaderboard({ list, unit = "RM", currentAgentCode, isEnac = fals
 function getQualifiedTicket(p1: number, p2: number, category: string): "VIP" | "ORDINARY" | "NONE" {
   const isRookie = category === 'ROOKIE';
   const total = p1 + p2;
-  const vipP1 = isRookie ? 6 : 24; const vipP2 = isRookie ? 6 : 24; const vipWash = isRookie ? 14 : 50;
-  if ((p1 >= vipP1 && p2 >= vipP2) || total >= vipWash) return "VIP";
-  const ordP1 = isRookie ? 3 : 12; const ordP2 = isRookie ? 3 : 12; const ordWash = isRookie ? 8 : 26;
-  if ((p1 >= ordP1 && p2 >= ordP2) || total >= ordWash) return "ORDINARY";
+  const vipWash = isRookie ? 14 : 50; const ordWash = isRookie ? 8 : 26;
+  if ((p1 >= (isRookie ? 6 : 24) && p2 >= (isRookie ? 6 : 24)) || total >= vipWash) return "VIP";
+  if ((p1 >= (isRookie ? 3 : 12) && p2 >= (isRookie ? 3 : 12)) || total >= ordWash) return "ORDINARY";
   return "NONE";
 }
 

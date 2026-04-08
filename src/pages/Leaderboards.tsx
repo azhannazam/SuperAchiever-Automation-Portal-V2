@@ -34,6 +34,7 @@ import {
   Info,
   UserCircle,
   UserPlus,
+  FileSpreadsheet,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { format, startOfMonth, endOfMonth, startOfYear, endOfYear, subMonths, subDays } from "date-fns";
@@ -47,6 +48,8 @@ import {
   Legend,
   ResponsiveContainer
 } from 'recharts';
+import { toast } from "sonner";
+import * as XLSX from "xlsx";
 
 // --- TYPES & INTERFACES ---
 interface Profile {
@@ -162,6 +165,7 @@ export default function Leaderboards() {
   });
   const [currentUserCode, setCurrentUserCode] = useState<string>("");
   const [hierarchiesBuilt, setHierarchiesBuilt] = useState(false);
+  const [exporting, setExporting] = useState(false);
 
   const isAdmin = role === "admin" || user?.email === "admin@superachiever.com";
   const API_BASE_URL = "http://127.0.0.1:8000";
@@ -295,15 +299,12 @@ export default function Leaderboards() {
 
   const buildHierarchies = () => {
     console.log("Building hierarchies...");
-    // First, build AD hierarchy
     const adResults = buildADHierarchy();
     setAdProduction(adResults);
     
-    // Then build AGM hierarchy
     const agmResults = buildAGMHierarchy();
     setAgmProductionList(agmResults);
     
-    // Update AD tab leaderboard
     updateADTabLeaderboard(adResults);
   };
 
@@ -324,7 +325,6 @@ export default function Leaderboards() {
       recruited_by: getRecruitedByName(ad.agentCode)
     }));
 
-    // Get all AGMs
     const agms = leaderboardData.AGM.map(agm => ({
       name: agm.name,
       code: agm.agentCode,
@@ -333,7 +333,6 @@ export default function Leaderboards() {
       recruited_by: getRecruitedByName(agm.agentCode)
     }));
 
-    // Get all regular agents
     const agentsMap = new Map<string, AgentEntry>();
     
     leaderboardData.GAD.forEach(person => {
@@ -359,7 +358,6 @@ export default function Leaderboards() {
       const agmsUnderAD: AGMEntry[] = [];
       const agentsUnderAD: AgentEntry[] = [];
       
-      // Find AGMs under this AD
       agms.forEach(agm => {
         const agmProfile = profilesMap.get(agm.code);
         if (agmProfile) {
@@ -372,7 +370,6 @@ export default function Leaderboards() {
                agmProfile.leader_name === ad.code));
           
           if (isUnderThisAD) {
-            // Find agents under this AGM
             const agentsUnderAGM: AgentEntry[] = [];
             agentsMap.forEach((agent, agentCode) => {
               const agentProfile = profilesMap.get(agentCode);
@@ -405,7 +402,6 @@ export default function Leaderboards() {
         }
       });
       
-      // Find direct agents under this AD
       agentsMap.forEach((agent, agentCode) => {
         if (countedAgentCodes.has(agentCode)) return;
         
@@ -426,7 +422,6 @@ export default function Leaderboards() {
         }
       });
 
-      // Calculate totals
       const agmsTotal = agmsUnderAD.reduce((sum, agm) => sum + agm.premium + agm.agents.reduce((s, a) => s + a.premium, 0), 0);
       const agmsCases = agmsUnderAD.reduce((sum, agm) => sum + agm.cases + agm.agents.reduce((s, a) => s + a.cases, 0), 0);
       const agentsTotal = agentsUnderAD.reduce((sum, agent) => sum + agent.premium, 0);
@@ -455,7 +450,6 @@ export default function Leaderboards() {
       recruited_by: getRecruitedByName(agm.agentCode)
     }));
 
-    // Get all regular agents
     const agentsMap = new Map<string, AgentEntry>();
     
     leaderboardData.GAD.forEach(person => {
@@ -670,7 +664,6 @@ export default function Leaderboards() {
           }
         });
 
-        // Sort basic categories
         categories["GAD"].sort((a, b) => b.premium - a.premium);
         categories["GAD"] = categories["GAD"].map((item, index) => ({ ...item, rank: index + 1 }));
         
@@ -683,6 +676,132 @@ export default function Leaderboards() {
       console.error("Error fetching leaderboard:", err);
     } finally {
       setLoadingData(false);
+    }
+  };
+
+  const handleExportStyledExcel = () => {
+    setExporting(true);
+
+    try {
+      const wb = XLSX.utils.book_new();
+      const currentData = leaderboardData[activeCategory] || [];
+      const categoryLabel = rankCategories.find(c => c.id === activeCategory)?.label || activeCategory;
+      const categoryDesc = rankCategories.find(c => c.id === activeCategory)?.description || "";
+
+      // ===== SHEET 1: Cover Page =====
+      const coverData = [
+        ["SUPERACHIEVER"],
+        [`${categoryLabel} Leaderboard Report`],
+        [""],
+        [`Report Generated: ${format(new Date(), "dd MMMM yyyy, HH:mm:ss")}`],
+        [""],
+        ["Report Information"],
+        [`Category: ${categoryLabel}`],
+        [`Description: ${categoryDesc}`],
+        [`Total Participants: ${currentData.length}`],
+        [`Total Cases: ${currentData.reduce((sum, entry) => sum + entry.cases, 0)}`],
+        [`Total AFYC: ${formatAFYC(currentData.reduce((sum, entry) => sum + entry.premium, 0))}`],
+        [""],
+        ["Prepared by: SuperAchiever System"],
+        ["This report is auto-generated by SuperAchiever Data Management System"],
+      ];
+      
+      const wsCover = XLSX.utils.aoa_to_sheet(coverData);
+      wsCover['!cols'] = [{ wch: 50 }];
+      XLSX.utils.book_append_sheet(wb, wsCover, "Cover");
+
+      // ===== SHEET 2: Leaderboard Data =====
+      const exportData = currentData.map((entry, index) => ({
+        "Rank": entry.rank,
+        "Name": entry.name,
+        "Agent Code": entry.agentCode,
+        "Rank Title": entry.rank_title,
+        "Total Cases": entry.cases,
+        "Total AFYC (RM)": entry.premium.toFixed(0),
+        "Recruited By": entry.leader_name || entry.introducer_name || "N/A",
+      }));
+
+      const wsData = XLSX.utils.json_to_sheet(exportData);
+      wsData['!cols'] = [
+        { wch: 8 },   // Rank
+        { wch: 30 },  // Name
+        { wch: 15 },  // Agent Code
+        { wch: 20 },  // Rank Title
+        { wch: 12 },  // Total Cases
+        { wch: 18 },  // Total AFYC
+        { wch: 25 },  // Recruited By
+      ];
+      XLSX.utils.book_append_sheet(wb, wsData, `${categoryLabel} Leaderboard`);
+
+      // ===== SHEET 3: Summary Statistics =====
+      const topPerformers = currentData.slice(0, 10);
+      const summaryData = [
+        { "Metric": "Leaderboard Summary", "Value": "" },
+        { "Metric": "Report Date", "Value": format(new Date(), "dd MMMM yyyy") },
+        { "Metric": "Category", "Value": categoryLabel },
+        { "Metric": "", "Value": "" },
+        { "Metric": "Overall Statistics", "Value": "" },
+        { "Metric": "Total Participants", "Value": currentData.length },
+        { "Metric": "Total Cases", "Value": currentData.reduce((sum, entry) => sum + entry.cases, 0) },
+        { "Metric": "Total AFYC", "Value": formatAFYC(currentData.reduce((sum, entry) => sum + entry.premium, 0)) },
+        { "Metric": "Average Cases per Participant", "Value": (currentData.reduce((sum, entry) => sum + entry.cases, 0) / currentData.length).toFixed(1) },
+        { "Metric": "Average AFYC per Participant", "Value": formatAFYC(currentData.reduce((sum, entry) => sum + entry.premium, 0) / currentData.length) },
+        { "Metric": "", "Value": "" },
+        { "Metric": "Top 10 Performers", "Value": "" },
+      ];
+      
+      topPerformers.forEach((performer, idx) => {
+        summaryData.push(
+          { "Metric": `  #${performer.rank} ${performer.name}`, "Value": `${formatAFYC(performer.premium)} AFYC (${performer.cases} cases)` }
+        );
+      });
+      
+      const wsSummary = XLSX.utils.json_to_sheet(summaryData);
+      wsSummary['!cols'] = [{ wch: 35 }, { wch: 30 }];
+      XLSX.utils.book_append_sheet(wb, wsSummary, "Summary");
+
+      // ===== SHEET 4: Performance Distribution (if data available) =====
+      if (currentData.length > 0) {
+        const premiumRanges = [
+          { range: "0 - 10,000", min: 0, max: 10000, count: 0 },
+          { range: "10,001 - 50,000", min: 10001, max: 50000, count: 0 },
+          { range: "50,001 - 100,000", min: 50001, max: 100000, count: 0 },
+          { range: "100,001 - 500,000", min: 100001, max: 500000, count: 0 },
+          { range: "500,001+", min: 500001, max: Infinity, count: 0 },
+        ];
+        
+        currentData.forEach(entry => {
+          for (const range of premiumRanges) {
+            if (entry.premium >= range.min && entry.premium <= range.max) {
+              range.count++;
+              break;
+            }
+          }
+        });
+        
+        const distributionData = premiumRanges.map(range => ({
+          "AFYC Range": range.range,
+          "Number of Participants": range.count,
+          "Percentage": `${((range.count / currentData.length) * 100).toFixed(1)}%`,
+        }));
+        
+        const wsDistribution = XLSX.utils.json_to_sheet(distributionData);
+        wsDistribution['!cols'] = [{ wch: 25 }, { wch: 20 }, { wch: 15 }];
+        XLSX.utils.book_append_sheet(wb, wsDistribution, "Performance Distribution");
+      }
+
+      // Generate filename
+      const dateStr = format(new Date(), "yyyyMMdd_HHmm");
+      const filename = `SuperAchiever_${categoryLabel}_Leaderboard_${dateStr}.xlsx`;
+
+      XLSX.writeFile(wb, filename);
+      
+      toast.success(`Exported ${categoryLabel} leaderboard to beautifully formatted Excel`);
+    } catch (error) {
+      console.error("Export error:", error);
+      toast.error("Failed to export leaderboard");
+    } finally {
+      setExporting(false);
     }
   };
 
@@ -706,12 +825,14 @@ export default function Leaderboards() {
     link.href = url;
     link.download = `${activeCategory}_Leaderboard_${format(new Date(), "yyyyMMdd")}.csv`;
     link.click();
+    toast.success(`Exported ${categoryLabel} leaderboard to CSV`);
   };
 
   if (isLoading) return <div className="min-h-screen flex items-center justify-center bg-background"><Loader2 className="h-8 w-8 animate-spin text-primary" /></div>;
   if (!user) return <Navigate to="/auth" replace />;
 
   const currentData = leaderboardData[activeCategory] || [];
+  const categoryLabel = rankCategories.find(c => c.id === activeCategory)?.label || activeCategory;
 
   return (
     <DashboardLayout>
@@ -736,10 +857,29 @@ export default function Leaderboards() {
                 Jump to Me
               </Button>
             )}
-            {isAdmin && (
-              <Button onClick={handleExportCSV} className="flex gap-2 shadow-md">
-                <Download className="h-4 w-4" /> Export {activeCategory} Rankings
-              </Button>
+            {isAdmin && currentData.length > 0 && (
+              <>
+                <Button 
+                  onClick={handleExportStyledExcel} 
+                  disabled={exporting}
+                  className="flex gap-2 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 shadow-lg transition-all duration-300"
+                >
+                  {exporting ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <FileSpreadsheet className="h-4 w-4" />
+                  )} 
+                  Export Excel
+                </Button>
+                <Button 
+                  onClick={handleExportCSV} 
+                  variant="outline"
+                  className="flex gap-2"
+                >
+                  <Download className="h-4 w-4" /> 
+                  Export CSV
+                </Button>
+              </>
             )}
           </div>
         </div>
@@ -754,8 +894,10 @@ export default function Leaderboards() {
             ))}
           </TabsList>
 
+          {/* Rest of your existing TabsContent remains the same */}
           {rankCategories.map((cat) => (
             <TabsContent key={cat.id} value={cat.id} className="mt-6">
+              {/* Your existing content - unchanged */}
               {loadingData ? (
                 <div className="flex flex-col items-center justify-center py-20">
                   <Loader2 className="h-10 w-10 animate-spin text-primary mb-4" />
@@ -844,7 +986,6 @@ export default function Leaderboards() {
                 </div>
               ) : cat.id === "AD" ? (
                 <div className="grid gap-6 lg:grid-cols-3">
-                  {/* Top 3 Podium - Always show top 3 ADs */}
                   <div className="lg:col-span-3">
                     <Card className="shadow-soft overflow-hidden border-none bg-gradient-to-br from-slate-50 to-slate-100">
                       <div className="bg-primary/5 p-4 border-b"><h3 className="font-semibold text-primary">{cat.description} Rankings</h3></div>
@@ -896,7 +1037,6 @@ export default function Leaderboards() {
                     </Card>
                   </div>
 
-                  {/* Full AD Leaderboard List - Shows ALL ADs */}
                   <Card className="lg:col-span-3 shadow-soft border-none">
                     <CardHeader><CardTitle className="text-lg">Full AD Leaderboard (Includes Hierarchy)</CardTitle></CardHeader>
                     <CardContent className="space-y-3">
@@ -1043,7 +1183,7 @@ export default function Leaderboards() {
           ))}
         </Tabs>
 
-        {/* AD Details Dialog - No Recruited By banner (removed as requested) */}
+        {/* AD Details Dialog */}
         <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
           <DialogContent className="max-w-4xl max-h-[80vh] overflow-y-auto">
             <DialogHeader><DialogTitle className="flex items-center gap-2"><Building2 className="h-5 w-5" />{selectedAD?.adName} - Agency Details (Includes recruited AGMs + Agents)</DialogTitle></DialogHeader>
@@ -1100,7 +1240,7 @@ export default function Leaderboards() {
           </DialogContent>
         </Dialog>
 
-        {/* AGM Details Dialog - Keep Recruited By */}
+        {/* AGM Details Dialog */}
         <Dialog open={agmDialogOpen} onOpenChange={setAgmDialogOpen}>
           <DialogContent className="max-w-3xl max-h-[80vh] overflow-y-auto">
             <DialogHeader><DialogTitle className="flex items-center gap-2"><Building2 className="h-5 w-5 text-emerald-600" />{selectedAGM?.name} - AGM Details (Recruited Agents)</DialogTitle></DialogHeader>
