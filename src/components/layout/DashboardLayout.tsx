@@ -15,7 +15,9 @@ import {
   Menu,
   X,
   ChevronDown,
-  Award, // Added for NAIS
+  ChevronRight,
+  Award,
+  Newspaper,
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -24,6 +26,11 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
 
 interface DashboardLayoutProps {
   children: ReactNode;
@@ -34,22 +41,11 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
   const location = useLocation();
   const navigate = useNavigate();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [contestsOpen, setContestsOpen] = useState(
+    location.pathname.includes("/contests") || location.pathname.includes("/contest-memo")
+  );
 
-  // LOGIC: Check role OR admin email for the guard
   const isAdmin = role === "admin" || user?.email === "admin@superachiever.com";
-
-  const navigation = [
-    { name: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
-    { name: "Cases", href: "/dashboard/cases", icon: FileText },
-    { name: "Contests", href: "/dashboard/contests", icon: Trophy },
-    { name: "NAIS 2026", href: "/dashboard/nais", icon: Award }, // Added NAIS Link
-    { name: "Leaderboards", href: "/dashboard/leaderboards", icon: Users },
-    { name: "Alerts", href: "/dashboard/alerts", icon: Bell },
-    // ADDED: Show Reports link only to Admin
-    ...(isAdmin
-      ? [{ name: "Reports", href: "/dashboard/reports", icon: Upload }]
-      : []),
-  ];
 
   const handleSignOut = async () => {
     await signOut();
@@ -94,25 +90,62 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
 
           {/* Navigation */}
           <nav className="flex-1 space-y-1 px-3 py-4">
-            {navigation.map((item) => {
-              const isActive = location.pathname === item.href;
-              return (
-                <Link
-                  key={item.name}
-                  to={item.href}
+            <NavItem href="/dashboard" icon={LayoutDashboard} label="Dashboard" currentPath={location.pathname} setSidebarOpen={setSidebarOpen} />
+            <NavItem href="/dashboard/cases" icon={FileText} label="Cases" currentPath={location.pathname} setSidebarOpen={setSidebarOpen} />
+            
+            {/* Contests Dropdown/Collapsible */}
+            <Collapsible open={contestsOpen} onOpenChange={setContestsOpen} className="w-full">
+              <CollapsibleTrigger asChild>
+                <button
                   className={cn(
-                    "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors",
-                    isActive
-                      ? "bg-sidebar-accent text-sidebar-accent-foreground"
-                      : "text-sidebar-foreground/70 hover:bg-sidebar-accent/50 hover:text-sidebar-foreground"
+                    "flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors hover:bg-sidebar-accent/50 hover:text-sidebar-foreground",
+                    (location.pathname.includes("/contests") || location.pathname.includes("/contest-memo")) 
+                      ? "text-sidebar-foreground" 
+                      : "text-sidebar-foreground/70"
                   )}
-                  onClick={() => setSidebarOpen(false)}
                 >
-                  <item.icon className="h-5 w-5" />
-                  {item.name}
+                  <Trophy className="h-5 w-5" />
+                  <span className="flex-1 text-left">Contests</span>
+                  <ChevronDown className={cn("h-4 w-4 transition-transform", contestsOpen ? "rotate-0" : "-rotate-90")} />
+                </button>
+              </CollapsibleTrigger>
+              <CollapsibleContent className="space-y-1 px-4 pt-1">
+                <Link
+                  to="/dashboard/contests"
+                  onClick={() => setSidebarOpen(false)}
+                  className={cn(
+                    "flex items-center gap-3 rounded-lg px-3 py-2 text-xs font-medium transition-colors",
+                    location.pathname === "/dashboard/contests"
+                      ? "bg-sidebar-accent text-sidebar-accent-foreground"
+                      : "text-sidebar-foreground/70 hover:bg-sidebar-accent/30 hover:text-sidebar-foreground"
+                  )}
+                >
+                  <Trophy className="h-4 w-4" />
+                  Contest Standings
                 </Link>
-              );
-            })}
+                <Link
+                  to="/contest-memo"
+                  onClick={() => setSidebarOpen(false)}
+                  className={cn(
+                    "flex items-center gap-3 rounded-lg px-3 py-2 text-xs font-medium transition-colors",
+                    location.pathname === "/contest-memo"
+                      ? "bg-sidebar-accent text-sidebar-accent-foreground"
+                      : "text-sidebar-foreground/70 hover:bg-sidebar-accent/30 hover:text-sidebar-foreground"
+                  )}
+                >
+                  <Newspaper className="h-4 w-4" />
+                  Contest Memos
+                </Link>
+              </CollapsibleContent>
+            </Collapsible>
+
+            <NavItem href="/dashboard/nais" icon={Award} label="NAIS 2026" currentPath={location.pathname} setSidebarOpen={setSidebarOpen} />
+            <NavItem href="/dashboard/leaderboards" icon={Users} label="Leaderboards" currentPath={location.pathname} setSidebarOpen={setSidebarOpen} />
+            <NavItem href="/dashboard/alerts" icon={Bell} label="Alerts" currentPath={location.pathname} setSidebarOpen={setSidebarOpen} />
+            
+            {isAdmin && (
+              <NavItem href="/dashboard/reports" icon={Upload} label="Reports" currentPath={location.pathname} setSidebarOpen={setSidebarOpen} />
+            )}
           </nav>
 
           {/* User section */}
@@ -138,63 +171,73 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
 
       {/* Main content */}
       <div className="lg:pl-64">
-        {/* Header */}
         <header className="sticky top-0 z-30 h-16 border-b border-border bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
           <div className="flex h-full items-center gap-4 px-4 lg:px-6">
-            <button
-              className="lg:hidden text-foreground"
-              onClick={() => setSidebarOpen(true)}
-            >
+            <button className="lg:hidden text-foreground" onClick={() => setSidebarOpen(true)}>
               <Menu className="h-6 w-6" />
             </button>
-
             <div className="flex-1" />
-
-            {/* Admin Buttons in Header */}
             {isAdmin && (
               <div className="hidden sm:flex items-center gap-2">
                 <Button variant="outline" size="sm" asChild>
-                  <Link to="/dashboard/reports">
-                    <Upload className="h-4 w-4 mr-2" />
-                    Upload Report
-                  </Link>
+                  <Link to="/dashboard/reports"><Upload className="h-4 w-4 mr-2" />Upload Report</Link>
                 </Button>
-                <Button variant="outline" size="sm">
-                  <Download className="h-4 w-4 mr-2" />
-                  Export
-                </Button>
+                <Button variant="outline" size="sm"><Download className="h-4 w-4 mr-2" />Export</Button>
               </div>
             )}
-
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="sm" className="gap-2">
-                  <div className="h-7 w-7 rounded-full gradient-primary flex items-center justify-center">
-                    <span className="text-xs font-semibold text-primary-foreground">
-                      {user?.email?.charAt(0).toUpperCase()}
-                    </span>
-                  </div>
-                  <ChevronDown className="h-4 w-4 text-muted-foreground" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-48">
-                <div className="px-2 py-1.5">
-                  <p className="text-sm font-medium">{user?.email}</p>
-                  <p className="text-xs text-muted-foreground capitalize">{isAdmin ? "Admin" : role} Portal</p>
-                </div>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem onClick={handleSignOut} className="text-destructive">
-                  <LogOut className="mr-2 h-4 w-4" />
-                  Sign out
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
+            <UserMenu user={user} isAdmin={isAdmin} role={role} handleSignOut={handleSignOut} />
           </div>
         </header>
-
-        {/* Page content */}
         <main className="p-4 lg:p-6">{children}</main>
       </div>
     </div>
+  );
+}
+
+// Helper component for Navigation Items
+function NavItem({ href, icon: Icon, label, currentPath, setSidebarOpen }: any) {
+  const isActive = currentPath === href;
+  return (
+    <Link
+      to={href}
+      className={cn(
+        "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors",
+        isActive
+          ? "bg-sidebar-accent text-sidebar-accent-foreground"
+          : "text-sidebar-foreground/70 hover:bg-sidebar-accent/50 hover:text-sidebar-foreground"
+      )}
+      onClick={() => setSidebarOpen(false)}
+    >
+      <Icon className="h-5 w-5" />
+      {label}
+    </Link>
+  );
+}
+
+// Helper component for User Dropdown
+function UserMenu({ user, isAdmin, role, handleSignOut }: any) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button variant="ghost" size="sm" className="gap-2">
+          <div className="h-7 w-7 rounded-full gradient-primary flex items-center justify-center">
+            <span className="text-xs font-semibold text-primary-foreground">
+              {user?.email?.charAt(0).toUpperCase()}
+            </span>
+          </div>
+          <ChevronDown className="h-4 w-4 text-muted-foreground" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-48">
+        <div className="px-2 py-1.5">
+          <p className="text-sm font-medium">{user?.email}</p>
+          <p className="text-xs text-muted-foreground capitalize">{isAdmin ? "Admin" : role} Portal</p>
+        </div>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem onClick={handleSignOut} className="text-destructive">
+          <LogOut className="mr-2 h-4 w-4" /> Sign out
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }

@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { format, parseISO, isAfter, differenceInMonths, startOfMonth } from "date-fns";
 
 // --- 1. TYPESCRIPT INTERFACES ---
 interface Profile {
@@ -43,19 +44,6 @@ function NAISSkeleton() {
       <div className="h-48 bg-white rounded-3xl border border-slate-100 grid md:grid-cols-2 divide-x divide-slate-100">
         <div className="p-8 space-y-4"><div className="h-4 w-1/3 bg-slate-100 rounded" /><div className="space-y-2"><div className="h-4 w-full bg-slate-50 rounded" /><div className="h-4 w-full bg-slate-50 rounded" /></div></div>
         <div className="p-8 space-y-4"><div className="h-4 w-1/3 bg-slate-100 rounded" /><div className="space-y-2"><div className="h-4 w-full bg-slate-50 rounded" /><div className="h-4 w-full bg-slate-50 rounded" /></div></div>
-      </div>
-      <div className="rounded-3xl border border-slate-100 bg-white overflow-hidden">
-        <div className="h-16 bg-[#0F172A]" />
-        <div className="p-4 space-y-4">
-          {[1, 2, 3, 4, 5].map((i) => (
-            <div key={i} className="flex justify-between items-center py-4 border-b border-slate-50">
-              <div className="h-6 w-12 bg-slate-100 rounded" />
-              <div className="h-6 w-48 bg-slate-100 rounded" />
-              <div className="h-6 w-24 bg-slate-100 rounded" />
-              <div className="h-6 w-24 bg-slate-200 rounded" />
-            </div>
-          ))}
-        </div>
       </div>
     </div>
   );
@@ -107,10 +95,10 @@ export default function NAIS() {
       if (activeSegment === "Super Elite 1") return agent.afyc >= 15000; 
       if (activeSegment === "Super Elite 2") return agent.afyc >= 10000 && agent.afyc < 14999; 
       if (activeSegment === "Super Elite 3") return agent.afyc >= 5000 && agent.afyc < 9999; 
-      if (activeSegment === "Super Elite 4") return agent.afyc < 2500; 
+      if (activeSegment === "Super Elite 4") return agent.afyc < 5000; 
       return true; 
     }); 
-    }, [contestants, activeSegment]);
+  }, [contestants, activeSegment]);
 
   const finalParticipants = useMemo(() => {
     return filteredBySegment.filter(c => 
@@ -125,16 +113,29 @@ export default function NAIS() {
     if (!currentAgentCode) return;
     const me = contestants.find(c => c.agentCode === currentAgentCode);
     if (!me) return;
-    if (me.afyc >= 15000) setActiveSegment("Super Elite 1");
-    else if (me.afyc >= 10000) setActiveSegment("Super Elite 2");
-    else if (me.afyc >= 5000) setActiveSegment("Super Elite 3");
-    else setActiveSegment("Super Elite 4");
 
+    // 1. Determine target segment
+    let targetSegment = "";
+    if (me.afyc >= 15000) targetSegment = "Super Elite 1";
+    else if (me.afyc >= 10000) targetSegment = "Super Elite 2";
+    else if (me.afyc >= 5000) targetSegment = "Super Elite 3";
+    else targetSegment = "Super Elite 4";
+
+    setActiveSegment(targetSegment);
     setSearchTerm("");
+
+    // 2. Wait for memo to update, then find index and scroll
     setTimeout(() => {
-      const myIdx = finalParticipants.findIndex(c => c.agentCode === currentAgentCode);
+      const myIdx = filteredBySegment.findIndex(c => c.agentCode === currentAgentCode);
+      if (myIdx === -1) return;
+
       if (myIdx >= visibleCount) setVisibleCount(myIdx + 1);
-      setTimeout(() => myRowRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 150);
+
+      requestAnimationFrame(() => {
+        if (myRowRef.current) {
+          myRowRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+      });
     }, 100);
   };
 
@@ -144,11 +145,12 @@ export default function NAIS() {
         <NAISSkeleton />
       ) : (
         <div className="p-6 space-y-6 max-w-[1600px] mx-auto transition-opacity duration-500">
-          {/* HEADER SECTION */}
           <div className="flex justify-between items-end">
             <div>
-              <h1 className="text-3xl font-black tracking-tight text-slate-900 uppercase italic">NAIS 2026</h1>
-              <p className="text-slate-500 font-medium">National Annual Incentive Summit Overview</p>
+              <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
+              NAIS Dashboard
+            </h1>
+              <p className="text-slate-500 font-medium">New Agent Incentive Scheme Overview</p>
             </div>
             <div className="flex gap-3">
                <Button onClick={handleJumpToMe} variant="outline" className="rounded-2xl border-blue-200 text-blue-600 font-bold bg-blue-50 hover:bg-blue-100 gap-2 h-11 px-6">
@@ -161,20 +163,18 @@ export default function NAIS() {
             </div>
           </div>
 
-          {/* TOP STAT BOXES */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             <StatBox title="Total Participants" value={contestants.length} icon={<Users className="text-blue-500" />} subtitle="Registered Agents" />
             <StatBox title="New This Week" value={80} icon={<UserPlus className="text-emerald-500" />} subtitle="+8% from last week" trend="up" />
             <StatBox title="Eliminated" value={20} icon={<UserMinus className="text-rose-500" />} subtitle="Did not meet pre-req" trend="down" />
           </div>
 
-          {/* REQUIREMENT CARD */}
           <Card className="border-none shadow-md overflow-hidden rounded-3xl bg-white border border-slate-100">
             <div className="grid md:grid-cols-2 divide-x divide-slate-100">
               <div className="p-8 space-y-4">
                 <div className="flex items-center gap-2 mb-2"><Info className="h-5 w-5 text-slate-400" /><h3 className="text-sm font-black text-slate-400 uppercase tracking-[0.2em]">Pre-requisite</h3></div>
                 <ul className="space-y-3">
-                  <RequirementItem text="Minimum 10 cases enforced by March 2026" />
+                  <RequirementItem text="Minimum 10 cases inforced by March 2026" />
                   <RequirementItem text="Attend NAIS briefing session" />
                   <RequirementItem text="Maintain minimum 90% persistency rate" />
                 </ul>
@@ -190,7 +190,6 @@ export default function NAIS() {
             </div>
           </Card>
 
-          {/* SEGMENT SELECTOR */}
           <div className="flex flex-wrap gap-2 p-2 bg-[#F8FAFC] rounded-full w-fit border border-slate-200/60 shadow-sm mx-auto">
             {["Super Elite 1", "Super Elite 2", "Super Elite 3", "Super Elite 4"].map((seg) => (
               <Button
@@ -208,7 +207,6 @@ export default function NAIS() {
             ))}
           </div>
 
-          {/* RANKING TABLE */}
           <Card className="border-none shadow-xl rounded-3xl overflow-hidden bg-white border border-slate-100">
             <CardHeader className="bg-[#0F172A] text-white flex flex-row items-center justify-between p-6">
               <CardTitle className="text-lg flex items-center gap-2 font-bold"><Trophy className="h-5 w-5 text-amber-400" />Ranking Standings</CardTitle>

@@ -24,6 +24,7 @@ import {
   X,
   ChevronDown,
   ChevronUp,
+  CreditCard,
 } from "lucide-react";
 import { format, parseISO, isValid, subDays, subMonths, startOfToday, endOfToday, startOfMonth, endOfMonth } from "date-fns";
 import {
@@ -59,6 +60,7 @@ interface Case {
   status: string;
   submission_date_timestamp: string;
   enforce_date: string | null;
+  payment_frequency: string | null; // Add payment frequency field
 }
 
 interface Filters {
@@ -69,6 +71,7 @@ interface Filters {
   status: string;
   search: string;
   datePreset?: string;
+  paymentFrequency: string; // Add payment frequency filter
 }
 
 // Helper function to safely parse dates
@@ -102,6 +105,15 @@ const formatDisplayDate = (dateString: string | null): string => {
   return format(date, "dd MMM yyyy");
 };
 
+// Format AFYC without RM symbol
+const formatAFYC = (value: number | null): string => {
+  if (!value) return "0 AFYC";
+  return `${value.toLocaleString('en-MY', {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0
+  })} AFYC`;
+};
+
 // Date format for inputs
 const formatDateInput = (date: Date | null): string => {
   if (!date) return "";
@@ -121,6 +133,9 @@ const parseDateInput = (dateString: string): Date | null => {
   return null;
 };
 
+// Payment frequency options for filtering
+const paymentFrequencyOptions = ["all", "Monthly", "Yearly", "Quarterly"];
+
 export default function Cases() {
   const { user, role, isLoading } = useAuth();
   const [cases, setCases] = useState<Case[]>([]);
@@ -135,7 +150,8 @@ export default function Cases() {
     dateRange: { from: null, to: null },
     status: "all",
     search: "",
-    datePreset: "any"
+    datePreset: "any",
+    paymentFrequency: "all"
   });
   const [showFilters, setShowFilters] = useState(false);
   const [dateInputs, setDateInputs] = useState({
@@ -250,7 +266,6 @@ export default function Cases() {
       if (data && data.length > 0) {
         let newCases = data;
         
-        // Apply role filtering if needed
         if (!isAdmin) {
           const { data: profile } = await supabase
             .from('profiles')
@@ -294,6 +309,11 @@ export default function Cases() {
     // Status filter
     if (filters.status !== "all") {
       filtered = filtered.filter((c) => c.status === filters.status);
+    }
+
+    // Payment frequency filter
+    if (filters.paymentFrequency !== "all") {
+      filtered = filtered.filter((c) => c.payment_frequency === filters.paymentFrequency);
     }
 
     // Date range filter
@@ -405,7 +425,8 @@ export default function Cases() {
       dateRange: { from: null, to: null },
       status: "all",
       search: "",
-      datePreset: "any"
+      datePreset: "any",
+      paymentFrequency: "all"
     });
     setDateInputs({ from: "", to: "" });
   };
@@ -414,6 +435,7 @@ export default function Cases() {
     let count = 0;
     if (filters.search) count++;
     if (filters.status !== "all") count++;
+    if (filters.paymentFrequency !== "all") count++;
     if (filters.dateRange.from || filters.dateRange.to) count++;
     return count;
   };
@@ -429,10 +451,11 @@ export default function Cases() {
       "Agent ID", 
       "Agent Name", 
       "Product", 
-      "Premium (RM)", 
+      "AFYC", 
       "Status", 
       "Submission Date",
-      "Enforce Date"
+      "Enforce Date",
+      "Payment Frequency"
     ];
     
     const csvContent = [
@@ -442,10 +465,11 @@ export default function Cases() {
         c.agent_id,
         `"${c.client_name.replace(/"/g, '""')}"`,
         `"${c.product_type || "N/A"}"`,
-        c.premium.toFixed(2),
+        (c.premium || 0).toFixed(0),
         c.status,
         c.submission_date_timestamp ? format(parseDate(c.submission_date_timestamp) || new Date(), "yyyy-MM-dd") : "N/A",
-        c.enforce_date ? format(parseDate(c.enforce_date) || new Date(), "yyyy-MM-dd") : "N/A"
+        c.enforce_date ? format(parseDate(c.enforce_date) || new Date(), "yyyy-MM-dd") : "N/A",
+        c.payment_frequency || "N/A"
       ].join(","))
     ].join("\n");
 
@@ -470,6 +494,9 @@ export default function Cases() {
 
   if (isLoading) return <div className="min-h-screen flex items-center justify-center"><Loader2 className="animate-spin" /></div>;
   if (!user) return <Navigate to="/auth" replace />;
+
+  // Get unique payment frequencies for filter badge
+  const uniquePaymentFrequencies = [...new Set(cases.map(c => c.payment_frequency).filter(Boolean))];
 
   return (
     <DashboardLayout>
@@ -616,6 +643,23 @@ export default function Cases() {
             </SelectContent>
           </Select>
 
+          {/* Payment Frequency Filter */}
+          <Select 
+            value={filters.paymentFrequency} 
+            onValueChange={(value) => setFilters(prev => ({ ...prev, paymentFrequency: value }))}
+          >
+            <SelectTrigger className="w-36">
+              <SelectValue placeholder="Payment Freq" />
+            </SelectTrigger>
+            <SelectContent>
+              {paymentFrequencyOptions.map((freq) => (
+                <SelectItem key={freq} value={freq}>
+                  {freq === "all" ? "All Frequencies" : freq}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
           {/* Clear Filters Button */}
           {getActiveFilterCount() > 0 && (
             <Button variant="ghost" size="sm" onClick={clearFilters} className="gap-2">
@@ -630,7 +674,7 @@ export default function Cases() {
           <div>
             <span className="text-lg font-semibold">Showing {filteredCases.length} of {totalCount}</span>
             <span className="text-muted-foreground ml-2">
-              ${calculateTotalPremium().toLocaleString()}
+              {formatAFYC(calculateTotalPremium())}
             </span>
           </div>
           {filters.dateRange.from && filters.dateRange.to && (
@@ -667,7 +711,8 @@ export default function Cases() {
                       {isAdmin && <TableHead className="font-bold">Agent ID</TableHead>}
                       <TableHead className="font-bold">Agent Name</TableHead>
                       <TableHead className="font-bold">Product</TableHead>
-                      <TableHead className="text-right font-bold">Premium</TableHead>
+                      <TableHead className="text-right font-bold">AFYC</TableHead>
+                      <TableHead className="font-bold">Payment Freq</TableHead>
                       <TableHead className="font-bold">Status</TableHead>
                       <TableHead className="font-bold">Enforce Date</TableHead>
                     </TableRow>
@@ -693,10 +738,17 @@ export default function Cases() {
                           {item.product_type || "N/A"}
                         </TableCell>
                         <TableCell className="text-right font-bold">
-                          ${Number(item.premium || 0).toLocaleString('en-MY', {
-                            minimumFractionDigits: 2,
-                            maximumFractionDigits: 2
-                          })}
+                          {formatAFYC(item.premium)}
+                        </TableCell>
+                        <TableCell>
+                          {item.payment_frequency ? (
+                            <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200">
+                              <CreditCard className="h-3 w-3 mr-1" />
+                              {item.payment_frequency}
+                            </Badge>
+                          ) : (
+                            <span className="text-muted-foreground text-xs">-</span>
+                          )}
                         </TableCell>
                         <TableCell>
                           <StatusBadge variant={item.status === "approved" ? "approved" : "pending"}>

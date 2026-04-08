@@ -36,7 +36,6 @@ def parse_ddmmyyyy(date_value):
             
             # Validate ranges
             if 1 <= day <= 31 and 1 <= month <= 12 and 2000 <= year <= 2100:
-                # Create datetime object
                 parsed_date = datetime(year, month, day)
                 logger.info(f"    ✅ Parsed DDMMYYYY date: {date_str} -> {parsed_date.strftime('%Y-%m-%d')}")
                 return parsed_date.isoformat()
@@ -45,7 +44,7 @@ def parse_ddmmyyyy(date_value):
         except Exception as e:
             logger.warning(f"    ⚠️ Error parsing date '{date_str}': {e}")
     
-    # Try Excel serial number format (if it's a number)
+    # Try Excel serial number format
     if date_str.replace('.', '').isdigit():
         try:
             from datetime import timedelta
@@ -58,7 +57,7 @@ def parse_ddmmyyyy(date_value):
         except:
             pass
     
-    # Try standard date parsing as last resort
+    # Try standard date parsing
     try:
         from dateutil import parser
         parsed = parser.parse(date_str, fuzzy=True)
@@ -72,127 +71,85 @@ def parse_ddmmyyyy(date_value):
     return None
 
 def extract_premium_value(row) -> float:
-    """
-    Extract premium value from row, specifically looking for AFYC column
-    """
-    # Look specifically for AFYC column
+    """Extract premium value from row, specifically looking for AFYC column"""
     if 'AFYC' in row and row['AFYC'] is not None:
         value = row['AFYC']
         try:
             if isinstance(value, (int, float)):
                 if float(value) > 0:
-                    logger.info(f"    ✅ Found premium in AFYC: {value}")
                     return float(value)
             elif isinstance(value, str):
-                # Remove any currency symbols and commas
                 cleaned = re.sub(r'[RM$,%\s]', '', value)
                 if cleaned and cleaned.replace('.', '').isdigit():
                     num_val = float(cleaned)
                     if num_val > 0:
-                        logger.info(f"    ✅ Found premium in AFYC: {value} -> {num_val}")
                         return num_val
         except (ValueError, TypeError) as e:
             logger.warning(f"    ⚠️ Could not convert AFYC value '{value}': {e}")
     
     return 0.0
 
-def process_report_316_large_file(file_path, chunk_size=5000):
+def process_excel_file(file_path, parse_entry_month_func=None, chunk_size=5000):
     """
-    Process large Report 316 files using openpyxl
+    Process Excel files (supports .xlsx, .xls, and .xlsb)
     """
+    file_ext = os.path.splitext(file_path)[1].lower()
+    file_size_mb = os.path.getsize(file_path) / (1024 * 1024)
+    logger.info(f"🚀 Processing {file_size_mb:.2f}MB file with extension {file_ext}...")
+    
     try:
-        from openpyxl import load_workbook
+        # For XLSB files, use pyxlsb engine
+        if file_ext == '.xlsb':
+            logger.info("📊 Using pyxlsb engine for XLSB file...")
+            df = pd.read_excel(file_path, engine='pyxlsb')
+        else:
+            # For XLSX and XLS files, use openpyxl or xlrd
+            df = pd.read_excel(file_path, engine='openpyxl' if file_ext == '.xlsx' else 'xlrd')
         
-        file_size_mb = os.path.getsize(file_path) / (1024 * 1024)
-        logger.info(f"🚀 Processing {file_size_mb:.2f}MB file with openpyxl...")
+        logger.info(f"📄 Loaded {len(df)} rows and {len(df.columns)} columns")
+        logger.info(f"📋 Columns found: {df.columns.tolist()}")
         
-        wb = load_workbook(file_path, read_only=True)
-        sheet_name = wb.sheetnames[0]
-        sheet = wb[sheet_name]
-        logger.info(f"📄 Processing sheet: {sheet_name}")
-        
-        # Get headers from first row
-        headers = []
-        for cell in next(sheet.iter_rows(min_row=1, max_row=1, values_only=True)):
-            headers.append(cell if cell else f"Column_{len(headers)}")
-        
-        logger.info(f"📋 Found {len(headers)} columns")
-        logger.info(f"📋 Sample headers: {headers[:10]}")
-        
-        # Find required column indices
-        required_columns = {
-            'PROPOSALNO': None,
-            'PROPOSAL_RECEIVED_DATE': None,  # For submission date
-            'RISK_COMMENCEMENT_DATE': None,
-            'AGENT_CODE': None,
-            'AGENT_NAME': None,
-            'AFYC': None,  # For premium
-            'PROPOSAL_STATUS': None,
-            'AM_NAME': None,
-            'POLICYNO': None,
-            'PRODUCT_NAME': None,
-            'POLY_STATUS': None,
-            'PAYMENT_FREQUENCY': None,
-            'Factor': None,
-            'TOTAL_EXPECTED_DUE': None
-        }
-        
-        for idx, header in enumerate(headers):
-            header_upper = str(header).upper().strip()
+        # Find required columns (case insensitive)
+        column_mapping = {}
+        for col in df.columns:
+            col_upper = str(col).upper().strip()
             
-            # Map columns
-            if header_upper == 'PROPOSALNO':
-                required_columns['PROPOSALNO'] = idx
-                logger.info(f"  ✅ Mapped PROPOSALNO to column {idx}")
-            elif header_upper == 'PROPOSAL_RECEIVED_DATE':
-                required_columns['PROPOSAL_RECEIVED_DATE'] = idx
-                logger.info(f"  ✅ Mapped PROPOSAL_RECEIVED_DATE to column {idx}")
-            elif header_upper == 'RISK_COMMENCEMENT_DATE':
-                required_columns['RISK_COMMENCEMENT_DATE'] = idx
-                logger.info(f"  ✅ Mapped RISK_COMMENCEMENT_DATE to column {idx}")
-            elif header_upper == 'AGENT_CODE':
-                required_columns['AGENT_CODE'] = idx
-                logger.info(f"  ✅ Mapped AGENT_CODE to column {idx}")
-            elif header_upper == 'AGENT_NAME':
-                required_columns['AGENT_NAME'] = idx
-                logger.info(f"  ✅ Mapped AGENT_NAME to column {idx}")
-            elif header_upper == 'AFYC':
-                required_columns['AFYC'] = idx
-                logger.info(f"  ✅ Mapped AFYC to column {idx}")
-            elif header_upper == 'PROPOSAL_STATUS':
-                required_columns['PROPOSAL_STATUS'] = idx
-                logger.info(f"  ✅ Mapped PROPOSAL_STATUS to column {idx}")
-            elif header_upper == 'AM_NAME':
-                required_columns['AM_NAME'] = idx
-                logger.info(f"  ✅ Mapped AM_NAME to column {idx}")
-            elif header_upper == 'POLICYNO':
-                required_columns['POLICYNO'] = idx
-                logger.info(f"  ✅ Mapped POLICYNO to column {idx}")
-            elif header_upper == 'PRODUCT_NAME':
-                required_columns['PRODUCT_NAME'] = idx
-                logger.info(f"  ✅ Mapped PRODUCT_NAME to column {idx}")
-            elif header_upper == 'POLY_STATUS':
-                required_columns['POLY_STATUS'] = idx
-                logger.info(f"  ✅ Mapped POLY_STATUS to column {idx}")
-            elif header_upper == 'PAYMENT_FREQUENCY':
-                required_columns['PAYMENT_FREQUENCY'] = idx
-                logger.info(f"  ✅ Mapped PAYMENT_FREQUENCY to column {idx}")
-            elif header_upper == 'FACTOR':
-                required_columns['Factor'] = idx
-                logger.info(f"  ✅ Mapped Factor to column {idx}")
-            elif header_upper == 'TOTAL_EXPECTED_DUE':
-                required_columns['TOTAL_EXPECTED_DUE'] = idx
-                logger.info(f"  ✅ Mapped TOTAL_EXPECTED_DUE to column {idx}")
+            if 'PROPOSALNO' in col_upper:
+                column_mapping['PROPOSALNO'] = col
+            elif 'PROPOSAL_RECEIVED_DATE' in col_upper:
+                column_mapping['PROPOSAL_RECEIVED_DATE'] = col
+            elif 'RISK_COMMENCEMENT_DATE' in col_upper:
+                column_mapping['RISK_COMMENCEMENT_DATE'] = col
+            elif 'AGENT_CODE' in col_upper:
+                column_mapping['AGENT_CODE'] = col
+            elif 'AGENT_NAME' in col_upper:
+                column_mapping['AGENT_NAME'] = col
+            elif 'AFYC' in col_upper:
+                column_mapping['AFYC'] = col
+            elif 'PROPOSAL_STATUS' in col_upper:
+                column_mapping['PROPOSAL_STATUS'] = col
+            elif 'AM_NAME' in col_upper:
+                column_mapping['AM_NAME'] = col
+            elif 'POLICYNO' in col_upper:
+                column_mapping['POLICYNO'] = col
+            elif 'PRODUCT_NAME' in col_upper:
+                column_mapping['PRODUCT_NAME'] = col
+            elif 'POLY_STATUS' in col_upper:
+                column_mapping['POLY_STATUS'] = col
+            elif 'PAYMENT_FREQUENCY' in col_upper:
+                column_mapping['PAYMENT_FREQUENCY'] = col
+                logger.info(f"  ✅ Found PAYMENT_FREQUENCY column: '{col}'")
+            elif 'ENTRY' in col_upper and 'MONTH' in col_upper:
+                column_mapping['ENTRY_MONTH'] = col
+                logger.info(f"  ✅ Found ENTRY_MONTH column: '{col}'")
         
-        # Check if essential columns exist
-        if required_columns['AGENT_CODE'] is None:
+        # Check for essential columns
+        if 'AGENT_CODE' not in column_mapping:
             logger.error("❌ AGENT_CODE column not found")
-            wb.close()
             return 0, None
         
-        if required_columns['PROPOSALNO'] is None:
+        if 'PROPOSALNO' not in column_mapping:
             logger.error("❌ PROPOSALNO column not found")
-            wb.close()
             return 0, None
         
         logger.info("✅ Required columns found")
@@ -200,29 +157,19 @@ def process_report_316_large_file(file_path, chunk_size=5000):
         # Process in chunks
         chunk_data = []
         total_records = 0
-        chunk_number = 0
         matching_records = 0
         
-        logger.info("🔍 Scanning for records...")
-        
-        for row_idx, row in enumerate(sheet.iter_rows(min_row=2, values_only=True), start=2):
-            if row_idx % 10000 == 0:
-                logger.info(f"  📊 Scanned {row_idx} rows, found {matching_records} matches...")
+        for idx, row in df.iterrows():
+            agent_code = row.get(column_mapping.get('AGENT_CODE'))
+            proposal_no = row.get(column_mapping.get('PROPOSALNO'))
             
-            if not any(row):
+            if pd.isna(agent_code) or pd.isna(proposal_no):
                 continue
             
-            # Get values using column indices
-            proposal_no = row[required_columns['PROPOSALNO']] if required_columns['PROPOSALNO'] is not None else None
-            agent_code = row[required_columns['AGENT_CODE']] if required_columns['AGENT_CODE'] is not None else None
-            
-            if not agent_code or not proposal_no:
-                continue
-            
-            # Get premium value from AFYC column
-            afic_value = row[required_columns['AFYC']] if required_columns['AFYC'] is not None else 0
+            # Get premium value
+            afic_value = row.get(column_mapping.get('AFYC', None))
             premium = 0.0
-            if afic_value:
+            if not pd.isna(afic_value):
                 try:
                     if isinstance(afic_value, (int, float)):
                         premium = float(afic_value)
@@ -233,59 +180,87 @@ def process_report_316_large_file(file_path, chunk_size=5000):
                 except (ValueError, TypeError):
                     premium = 0.0
             
-            # Get submission date from PROPOSAL_RECEIVED_DATE and parse it
+            # Get submission date
             submission_date = None
-            if required_columns['PROPOSAL_RECEIVED_DATE'] is not None:
-                raw_date = row[required_columns['PROPOSAL_RECEIVED_DATE']]
-                submission_date = parse_ddmmyyyy(raw_date)
+            if 'PROPOSAL_RECEIVED_DATE' in column_mapping:
+                raw_date = row.get(column_mapping['PROPOSAL_RECEIVED_DATE'])
+                if not pd.isna(raw_date):
+                    submission_date = parse_ddmmyyyy(raw_date)
             
             # Get risk commencement date
             risk_date = None
-            if required_columns['RISK_COMMENCEMENT_DATE'] is not None:
-                raw_risk_date = row[required_columns['RISK_COMMENCEMENT_DATE']]
-                risk_date = parse_ddmmyyyy(raw_risk_date)
+            if 'RISK_COMMENCEMENT_DATE' in column_mapping:
+                raw_risk_date = row.get(column_mapping['RISK_COMMENCEMENT_DATE'])
+                if not pd.isna(raw_risk_date):
+                    risk_date = parse_ddmmyyyy(raw_risk_date)
+            
+            # Get Entry Month
+            entry_month = None
+            if 'ENTRY_MONTH' in column_mapping and parse_entry_month_func:
+                raw_entry_month = row.get(column_mapping['ENTRY_MONTH'])
+                if not pd.isna(raw_entry_month):
+                    entry_month = parse_entry_month_func(raw_entry_month, submission_date)
+            
+            # Get payment frequency
+            payment_frequency = None
+            if 'PAYMENT_FREQUENCY' in column_mapping:
+                raw_payment_freq = row.get(column_mapping['PAYMENT_FREQUENCY'])
+                if not pd.isna(raw_payment_freq):
+                    payment_frequency = str(raw_payment_freq).strip()
+                    logger.debug(f"  💳 Payment Frequency: {payment_frequency}")
             
             # Get other values
-            agent_name = row[required_columns['AGENT_NAME']] if required_columns['AGENT_NAME'] is not None else 'Unknown'
-            proposal_status = row[required_columns['PROPOSAL_STATUS']] if required_columns['PROPOSAL_STATUS'] is not None else ''
-            am_name = row[required_columns['AM_NAME']] if required_columns['AM_NAME'] is not None else None
-            policy_no = row[required_columns['POLICYNO']] if required_columns['POLICYNO'] is not None else proposal_no
-            product_name = row[required_columns['PRODUCT_NAME']] if required_columns['PRODUCT_NAME'] is not None else 'Standard'
-            poly_status = row[required_columns['POLY_STATUS']] if required_columns['POLY_STATUS'] is not None else ''
-            payment_frequency = row[required_columns['PAYMENT_FREQUENCY']] if required_columns['PAYMENT_FREQUENCY'] is not None else None
-            factor = row[required_columns['Factor']] if required_columns['Factor'] is not None else 0
-            total_expected_due = row[required_columns['TOTAL_EXPECTED_DUE']] if required_columns['TOTAL_EXPECTED_DUE'] is not None else 0
+            agent_name = row.get(column_mapping.get('AGENT_NAME', None), 'Unknown')
+            if pd.isna(agent_name):
+                agent_name = 'Unknown'
+            
+            proposal_status = row.get(column_mapping.get('PROPOSAL_STATUS', None), '')
+            if pd.isna(proposal_status):
+                proposal_status = ''
+            
+            am_name = row.get(column_mapping.get('AM_NAME', None), None)
+            if pd.isna(am_name):
+                am_name = None
+            
+            policy_no = row.get(column_mapping.get('POLICYNO', None), proposal_no)
+            if pd.isna(policy_no):
+                policy_no = proposal_no
+            
+            product_name = row.get(column_mapping.get('PRODUCT_NAME', None), 'Standard')
+            if pd.isna(product_name):
+                product_name = 'Standard'
+            
+            poly_status = row.get(column_mapping.get('POLY_STATUS', None), '')
+            if pd.isna(poly_status):
+                poly_status = ''
             
             matching_records += 1
             
-            # Convert row to dictionary
             row_dict = {
-                'PROPOSALNO': proposal_no,
-                'POLICYNO': policy_no,
+                'PROPOSALNO': str(proposal_no),
+                'POLICYNO': str(policy_no),
                 'PROPOSAL_RECEIVED_DATE': submission_date,
                 'RISK_COMMENCEMENT_DATE': risk_date,
-                'AGENT_CODE': agent_code,
-                'AGENT_NAME': agent_name,
+                'AGENT_CODE': str(agent_code),
+                'AGENT_NAME': str(agent_name),
                 'AFYC': premium,
-                'PROPOSAL_STATUS': proposal_status,
+                'PROPOSAL_STATUS': str(proposal_status).lower(),
                 'AM_NAME': am_name,
-                'PRODUCT_NAME': product_name,
-                'POLY_STATUS': poly_status,
+                'PRODUCT_NAME': str(product_name),
+                'POLY_STATUS': str(poly_status).lower(),
                 'PAYMENT_FREQUENCY': payment_frequency,
-                'Factor': factor,
-                'TOTAL_EXPECTED_DUE': total_expected_due
+                'ENTRY_MONTH': entry_month,
             }
             
             chunk_data.append(row_dict)
             
             if len(chunk_data) >= chunk_size:
-                chunk_number += 1
                 df_chunk = pd.DataFrame(chunk_data)
-                logger.info(f"📦 Processing chunk {chunk_number} with {len(df_chunk)} records")
+                logger.info(f"📦 Processing chunk with {len(df_chunk)} records")
                 
-                # Debug: Show premium values in this chunk
-                non_zero = len(df_chunk[df_chunk['AFYC'] > 0])
-                logger.info(f"  💰 Records with premium > 0: {non_zero}/{len(df_chunk)}")
+                # Count records with payment frequency
+                has_payment_freq = len(df_chunk[df_chunk['PAYMENT_FREQUENCY'].notna()])
+                logger.info(f"  💳 Records with Payment Frequency: {has_payment_freq}/{len(df_chunk)}")
                 
                 success, errors = sync_to_supabase_optimized(df_chunk, batch_size=100)
                 total_records += success
@@ -293,55 +268,35 @@ def process_report_316_large_file(file_path, chunk_size=5000):
                 chunk_data = []
                 gc.collect()
         
+        # Process remaining chunk
         if chunk_data:
-            chunk_number += 1
             df_chunk = pd.DataFrame(chunk_data)
             logger.info(f"📦 Processing final chunk with {len(df_chunk)} records")
             
-            non_zero = len(df_chunk[df_chunk['AFYC'] > 0])
-            logger.info(f"  💰 Records with premium > 0: {non_zero}/{len(df_chunk)}")
+            has_payment_freq = len(df_chunk[df_chunk['PAYMENT_FREQUENCY'].notna()])
+            logger.info(f"  💳 Records with Payment Frequency: {has_payment_freq}/{len(df_chunk)}")
             
             success, errors = sync_to_supabase_optimized(df_chunk, batch_size=100)
             total_records += success
         
-        wb.close()
-        
-        logger.info(f"📊 Scan complete: {row_idx} total rows scanned")
         logger.info(f"📊 Matching records found: {matching_records}")
         logger.info(f"✅ Successfully synced {total_records} records")
         
-        if total_records > 0:
-            output_folder = Path("../data/daily_submissions")
-            output_folder.mkdir(parents=True, exist_ok=True)
-            
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M")
-            output_filename = f"Daily_Submissions_Summary_{timestamp}.txt"
-            output_path = output_folder / output_filename
-            
-            with open(output_path, 'w') as f:
-                f.write("=" * 50 + "\n")
-                f.write("SUPERACHIEVER DAILY SUBMISSION SUMMARY\n")
-                f.write("=" * 50 + "\n\n")
-                f.write(f"Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-                f.write(f"Source File: {os.path.basename(file_path)}\n")
-                f.write(f"File Size: {file_size_mb:.2f}MB\n\n")
-                f.write(f"RESULTS:\n")
-                f.write(f"  Total Records Synced: {total_records:,}\n")
-                f.write(f"  Matching Records Found: {matching_records:,}\n")
-                f.write(f"  Rows Scanned: {row_idx:,}\n")
-            
-            logger.info(f"📁 Summary file created: {output_filename}")
-            return total_records, output_filename
-        
-        return 0, None
+        return total_records, None
         
     except Exception as e:
-        logger.error(f"❌ Error processing large file: {e}")
+        logger.error(f"❌ Error processing file: {e}")
         import traceback
         traceback.print_exc()
         return 0, None
 
-def process_report_316(file_path):
+def process_report_316_large_file(file_path, parse_entry_month_func=None, chunk_size=5000):
+    """
+    Process large Report 316 files with support for XLSB format
+    """
+    return process_excel_file(file_path, parse_entry_month_func, chunk_size)
+
+def process_report_316(file_path, parse_entry_month_func=None):
     """
     Main function to process Report 316 files
     """
@@ -352,4 +307,4 @@ def process_report_316(file_path):
     file_size_mb = os.path.getsize(file_path) / (1024 * 1024)
     logger.info(f"📏 File size: {file_size_mb:.2f}MB")
     
-    return process_report_316_large_file(file_path)
+    return process_report_316_large_file(file_path, parse_entry_month_func)

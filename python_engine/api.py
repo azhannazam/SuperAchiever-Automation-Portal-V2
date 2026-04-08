@@ -12,6 +12,7 @@ import json
 from pathlib import Path
 import asyncio
 import gc
+import pandas as pd
 
 # Import your existing scripts
 from excel_bot import process_report_316, process_report_316_large_file
@@ -72,6 +73,117 @@ def format_file_size(size_bytes):
             return f"{size_bytes:.2f} {unit}"
         size_bytes /= 1024.0
     return f"{size_bytes:.2f} TB"
+
+def parse_entry_month(value, submission_date=None):
+    """
+    Parse Entry Month from Excel to get first day of the month
+    Handles month abbreviations: Jan, Feb, Mar, Apr, May, Jun, Jul, Aug, Sep, Oct, Nov, Dec
+    Returns date in YYYY-MM-DD format (first day of the month)
+    """
+    if not value or pd.isna(value):
+        return None
+    
+    # Month abbreviation mapping
+    month_map = {
+        'JAN': 1, 'JANUARY': 1,
+        'FEB': 2, 'FEBRUARY': 2,
+        'MAR': 3, 'MARCH': 3,
+        'APR': 4, 'APRIL': 4,
+        'MAY': 5,
+        'JUN': 6, 'JUNE': 6,
+        'JUL': 7, 'JULY': 7,
+        'AUG': 8, 'AUGUST': 8,
+        'SEP': 9, 'SEPTEMBER': 9,
+        'OCT': 10, 'OCTOBER': 10,
+        'NOV': 11, 'NOVEMBER': 11,
+        'DEC': 12, 'DECEMBER': 12,
+    }
+    
+    try:
+        # If it's already a datetime object
+        if isinstance(value, (datetime, pd.Timestamp)):
+            return value.replace(day=1).date().isoformat()
+        
+        # Convert to string and clean
+        value_str = str(value).strip().upper()
+        
+        # Check if it's a month abbreviation or full month name
+        if value_str in month_map:
+            month_num = month_map[value_str]
+            
+            # Try to get year from submission_date if available
+            year = None
+            if submission_date and not pd.isna(submission_date):
+                if isinstance(submission_date, (datetime, pd.Timestamp)):
+                    year = submission_date.year
+                else:
+                    try:
+                        sub_date = pd.to_datetime(submission_date)
+                        year = sub_date.year
+                    except:
+                        pass
+            
+            # Fallback to current year
+            if not year:
+                year = datetime.now().year
+            
+            entry_month_date = datetime(year, month_num, 1)
+            return entry_month_date.date().isoformat()
+        
+        # Try YYYY-MM-DD format
+        if len(value_str) == 10 and value_str.count('-') == 2:
+            parsed = datetime.strptime(value_str, '%Y-%m-%d')
+            return parsed.replace(day=1).date().isoformat()
+        
+        # Try YYYY-MM format
+        if len(value_str) == 7 and value_str.count('-') == 1:
+            parsed = datetime.strptime(value_str, '%Y-%m')
+            return parsed.replace(day=1).date().isoformat()
+        
+        # Try MM/DD/YYYY or MM/YYYY
+        if '/' in value_str:
+            parts = value_str.split('/')
+            if len(parts) == 3:  # MM/DD/YYYY
+                parsed = datetime.strptime(value_str, '%m/%d/%Y')
+                return parsed.replace(day=1).date().isoformat()
+            elif len(parts) == 2:  # MM/YYYY
+                parsed = datetime.strptime(value_str, '%m/%Y')
+                return parsed.replace(day=1).date().isoformat()
+        
+        # Try Month YYYY (e.g., "Jan 2024" or "January 2024")
+        try:
+            parsed = datetime.strptime(value_str, '%b %Y')
+            return parsed.replace(day=1).date().isoformat()
+        except:
+            pass
+        
+        try:
+            parsed = datetime.strptime(value_str, '%B %Y')
+            return parsed.replace(day=1).date().isoformat()
+        except:
+            pass
+        
+        # Try YYYYMMDD format
+        if value_str.isdigit() and len(value_str) == 8:
+            parsed = datetime.strptime(value_str, '%Y%m%d')
+            return parsed.replace(day=1).date().isoformat()
+        
+        # Try YYYYMM format
+        if value_str.isdigit() and len(value_str) == 6:
+            parsed = datetime.strptime(value_str, '%Y%m')
+            return parsed.replace(day=1).date().isoformat()
+        
+        # If it's a numeric value (Excel serial date)
+        if isinstance(value, (int, float)):
+            from datetime import timedelta
+            excel_base = datetime(1899, 12, 30)
+            parsed = excel_base + timedelta(days=value)
+            return parsed.replace(day=1).date().isoformat()
+        
+    except Exception as e:
+        print(f"⚠️ Error parsing Entry Month '{value}': {e}")
+    
+    return None
 
 # --- OPTIONS Handlers ---
 @app.options("/api/health")
@@ -240,9 +352,10 @@ async def process_report_316_endpoint(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...)
 ):
-    """Process Report 316 Excel file with support for large files"""
-    if not file.filename.endswith(('.xlsx', '.xls')):
-        raise HTTPException(status_code=400, detail="Invalid file type. Please upload .xlsx or .xls file")
+    """Process Report 316 Excel file with support for large files and XLSB format"""
+    # Allow .xlsx, .xls, and .xlsb files
+    if not file.filename.endswith(('.xlsx', '.xls', '.xlsb')):
+        raise HTTPException(status_code=400, detail="Invalid file type. Please upload .xlsx, .xls, or .xlsb file")
     
     # Check content length if available
     if file.size and file.size > MAX_FILE_SIZE:
@@ -303,7 +416,8 @@ async def process_report_316_endpoint(
             "message": f"File uploaded successfully ({file_size_mb:.2f}MB). Processing in background.",
             "filename": file.filename,
             "file_size_mb": round(file_size_mb, 2),
-            "processing_method": "chunked" if use_large_file_processor else "standard"
+            "processing_method": "chunked" if use_large_file_processor else "standard",
+            "file_type": os.path.splitext(file.filename)[1]
         }
         
     except HTTPException:
@@ -338,10 +452,9 @@ def process_report_316_background(
         # Choose the appropriate processor
         if use_large_file_processor:
             print(f"📏 Using large file processor for {file_size_mb:.2f}MB file")
-            from excel_bot import process_report_316_large_file
-            count, output_file = process_report_316_large_file(file_path)
+            count, output_file = process_report_316_large_file(file_path, parse_entry_month)
         else:
-            count, output_file = process_report_316(file_path)
+            count, output_file = process_report_316(file_path, parse_entry_month)
         
         processing_status[job_id] = {
             "status": "completed", 
@@ -396,8 +509,9 @@ async def import_agent_master_endpoint(
     file: UploadFile = File(...)
 ):
     """Import Agent Master Listing"""
-    if not file.filename.endswith(('.xlsx', '.xls')):
-        raise HTTPException(status_code=400, detail="Invalid file type")
+    # Allow .xlsx, .xls, and .xlsb files for master import
+    if not file.filename.endswith(('.xlsx', '.xls', '.xlsb')):
+        raise HTTPException(status_code=400, detail="Invalid file type. Please upload .xlsx, .xls, or .xlsb file")
     
     try:
         # Save uploaded file

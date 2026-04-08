@@ -33,6 +33,7 @@ import {
   AlertCircle,
   Info,
   UserCircle,
+  UserPlus,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { format, startOfMonth, endOfMonth, startOfYear, endOfYear, subMonths, subDays } from "date-fns";
@@ -71,8 +72,8 @@ interface LeaderboardEntry {
   premium: number;
   rank_title: string;
   isCurrentUser: boolean;
-  leader_name?: string | null;  // For hierarchy
-  introducer_name?: string | null; // For hierarchy
+  leader_name?: string | null;
+  introducer_name?: string | null;
 }
 
 interface AgentEntry {
@@ -81,6 +82,16 @@ interface AgentEntry {
   cases: number;
   premium: number;
   rank: string;
+  recruited_by?: string | null;
+}
+
+interface AGMEntry {
+  name: string;
+  agentCode: string;
+  premium: number;
+  cases: number;
+  agents: AgentEntry[];
+  recruited_by?: string | null;
 }
 
 interface ADProduction {
@@ -88,7 +99,9 @@ interface ADProduction {
   adCode: string;
   totalPremium: number;
   totalCases: number;
+  agms: AGMEntry[];
   agents: AgentEntry[];
+  recruited_by?: string | null;
 }
 
 interface ProductionData {
@@ -98,8 +111,8 @@ interface ProductionData {
 
 const rankCategories = [
   { id: "GAD", label: "GAD", description: "SuperAchiever Group Statistics" },
-  { id: "AD", label: "AD", description: "Agency Director" },
-  { id: "AGM", label: "AGM", description: "Agency Group Manager" },
+  { id: "AD", label: "AD", description: "Agency Director (Includes recruited AGMs + Agents)" },
+  { id: "AGM", label: "AGM", description: "Agency Group Manager (Includes recruited Agents)" },
   { id: "Agt", label: "Agent", description: "Insurance Agent" },
 ];
 
@@ -115,8 +128,8 @@ function getRankIcon(rank: number) {
 // Helper to format AFYC
 const formatAFYC = (value: number): string => {
   return value.toLocaleString('en-MY', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0
   });
 };
 
@@ -128,8 +141,11 @@ export default function Leaderboards() {
   });
   const [loadingData, setLoadingData] = useState(true);
   const [adProduction, setAdProduction] = useState<ADProduction[]>([]);
+  const [agmProductionList, setAgmProductionList] = useState<AGMEntry[]>([]);
   const [selectedAD, setSelectedAD] = useState<ADProduction | null>(null);
+  const [selectedAGM, setSelectedAGM] = useState<AGMEntry | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [agmDialogOpen, setAgmDialogOpen] = useState(false);
   const [timeFilter, setTimeFilter] = useState<"day" | "month" | "year">("month");
   const [productionData, setProductionData] = useState<ProductionData[]>([]);
   const [totalGroupProduction, setTotalGroupProduction] = useState(0);
@@ -145,6 +161,7 @@ export default function Leaderboards() {
     withoutPremium: 0
   });
   const [currentUserCode, setCurrentUserCode] = useState<string>("");
+  const [hierarchiesBuilt, setHierarchiesBuilt] = useState(false);
 
   const isAdmin = role === "admin" || user?.email === "admin@superachiever.com";
   const API_BASE_URL = "http://127.0.0.1:8000";
@@ -180,16 +197,17 @@ export default function Leaderboards() {
   }, [activeCategory, timeFilter, allCases]);
 
   useEffect(() => {
-    if (activeCategory === "GAD" && leaderboardData.GAD.length > 0) {
-      buildADHierarchy();
+    // Only build hierarchies once when data is loaded and not yet built
+    if (!loadingData && leaderboardData.GAD.length > 0 && !hierarchiesBuilt) {
+      buildHierarchies();
+      setHierarchiesBuilt(true);
     }
-  }, [activeCategory, leaderboardData]);
+  }, [loadingData, leaderboardData.GAD.length, hierarchiesBuilt]);
 
   const scrollToUser = () => {
     const userElement = document.getElementById(`user-${currentUserCode}`);
     if (userElement) {
       userElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      // Highlight temporarily
       userElement.classList.add('ring-2', 'ring-primary', 'ring-offset-2');
       setTimeout(() => {
         userElement.classList.remove('ring-2', 'ring-primary', 'ring-offset-2');
@@ -203,22 +221,13 @@ export default function Leaderboards() {
       const response = await fetch(`${API_BASE_URL}/api/total-production`);
       if (response.ok) {
         const data = await response.json();
-        console.log("📊 API Response:", data);
-        console.log("📊 Total from API:", data.total);
-        console.log("📊 Count from API:", data.count);
-        
         setTotalGroupProduction(data.total);
         setTotalGroupCases(data.count);
         
-        // Compare with local calculation
         if (allCases.length > 0) {
           const localTotal = allCases.reduce((sum, c) => sum + c.premium, 0);
-          console.log("📊 Local total from allCases:", localTotal);
-          console.log("📊 Difference:", data.total - localTotal);
           setDebugInfo(`API: ${data.total.toFixed(2)} | Local: ${localTotal.toFixed(2)} | Diff: ${(data.total - localTotal).toFixed(2)}`);
         }
-      } else {
-        console.error("❌ API response not OK:", response.status);
       }
     } catch (err) {
       console.error("❌ Error fetching total production:", err);
@@ -284,36 +293,125 @@ export default function Leaderboards() {
     setProductionData(data);
   };
 
-  const buildADHierarchy = () => {
+  const buildHierarchies = () => {
+    console.log("Building hierarchies...");
+    // First, build AD hierarchy
+    const adResults = buildADHierarchy();
+    setAdProduction(adResults);
+    
+    // Then build AGM hierarchy
+    const agmResults = buildAGMHierarchy();
+    setAgmProductionList(agmResults);
+    
+    // Update AD tab leaderboard
+    updateADTabLeaderboard(adResults);
+  };
+
+  const getRecruitedByName = (agentCode: string): string | null => {
+    const profile = profilesMap.get(agentCode);
+    if (profile) {
+      return profile.introducer_name || profile.leader_name;
+    }
+    return null;
+  };
+
+  const buildADHierarchy = (): ADProduction[] => {
     const ads = leaderboardData.AD.map(ad => ({
       name: ad.name,
       code: ad.agentCode,
       premium: ad.premium,
-      cases: ad.cases
+      cases: ad.cases,
+      recruited_by: getRecruitedByName(ad.agentCode)
     }));
 
+    // Get all AGMs
+    const agms = leaderboardData.AGM.map(agm => ({
+      name: agm.name,
+      code: agm.agentCode,
+      premium: agm.premium,
+      cases: agm.cases,
+      recruited_by: getRecruitedByName(agm.agentCode)
+    }));
+
+    // Get all regular agents
     const agentsMap = new Map<string, AgentEntry>();
     
     leaderboardData.GAD.forEach(person => {
-      if (!ads.some(ad => ad.code === person.agentCode)) {
+      const rankUpper = String(person.rank_title).toUpperCase();
+      const isAD = rankUpper.includes("AGENCY DIRECTOR") || rankUpper.includes("AD");
+      const isAGM = rankUpper.includes("AGENCY GROWTH MANAGER") || rankUpper.includes("AGM");
+      const isGAD = rankUpper.includes("GROUP AGENCY DIRECTOR") || rankUpper.includes("GAD");
+      
+      if (!isAD && !isAGM && !isGAD) {
         agentsMap.set(person.agentCode, {
           name: person.name,
           agentCode: person.agentCode,
           premium: person.premium,
           cases: person.cases,
-          rank: person.rank_title
+          rank: person.rank_title,
+          recruited_by: getRecruitedByName(person.agentCode)
         });
       }
     });
 
     const adProductionList: ADProduction[] = ads.map(ad => {
+      const countedAgentCodes = new Set<string>();
+      const agmsUnderAD: AGMEntry[] = [];
       const agentsUnderAD: AgentEntry[] = [];
       
+      // Find AGMs under this AD
+      agms.forEach(agm => {
+        const agmProfile = profilesMap.get(agm.code);
+        if (agmProfile) {
+          const isUnderThisAD = 
+            (agmProfile.introducer_name && 
+              (agmProfile.introducer_name === ad.name || 
+               agmProfile.introducer_name === ad.code)) ||
+            (agmProfile.leader_name && 
+              (agmProfile.leader_name === ad.name || 
+               agmProfile.leader_name === ad.code));
+          
+          if (isUnderThisAD) {
+            // Find agents under this AGM
+            const agentsUnderAGM: AgentEntry[] = [];
+            agentsMap.forEach((agent, agentCode) => {
+              const agentProfile = profilesMap.get(agentCode);
+              if (agentProfile && !countedAgentCodes.has(agentCode)) {
+                const isUnderThisAGM = 
+                  (agentProfile.introducer_name && 
+                    (agentProfile.introducer_name === agm.name || 
+                     agentProfile.introducer_name === agm.code)) ||
+                  (agentProfile.leader_name && 
+                    (agentProfile.leader_name === agm.name || 
+                     agentProfile.leader_name === agm.code));
+                
+                if (isUnderThisAGM) {
+                  agentsUnderAGM.push(agent);
+                  countedAgentCodes.add(agentCode);
+                }
+              }
+            });
+            
+            agmsUnderAD.push({
+              name: agm.name,
+              agentCode: agm.code,
+              premium: agm.premium,
+              cases: agm.cases,
+              agents: agentsUnderAGM,
+              recruited_by: agm.recruited_by
+            });
+            countedAgentCodes.add(agm.code);
+          }
+        }
+      });
+      
+      // Find direct agents under this AD
       agentsMap.forEach((agent, agentCode) => {
+        if (countedAgentCodes.has(agentCode)) return;
+        
         const profile = profilesMap.get(agentCode);
         if (profile) {
-          // Check hierarchy based on introducer_name and leader_name
-          const isUnderThisAD = 
+          const isDirectUnderAD = 
             (profile.introducer_name && 
               (profile.introducer_name === ad.name || 
                profile.introducer_name === ad.code)) ||
@@ -321,26 +419,114 @@ export default function Leaderboards() {
               (profile.leader_name === ad.name || 
                profile.leader_name === ad.code));
           
-          if (isUnderThisAD) {
+          if (isDirectUnderAD) {
             agentsUnderAD.push(agent);
+            countedAgentCodes.add(agentCode);
           }
         }
       });
 
+      // Calculate totals
+      const agmsTotal = agmsUnderAD.reduce((sum, agm) => sum + agm.premium + agm.agents.reduce((s, a) => s + a.premium, 0), 0);
+      const agmsCases = agmsUnderAD.reduce((sum, agm) => sum + agm.cases + agm.agents.reduce((s, a) => s + a.cases, 0), 0);
       const agentsTotal = agentsUnderAD.reduce((sum, agent) => sum + agent.premium, 0);
       const agentsCases = agentsUnderAD.reduce((sum, agent) => sum + agent.cases, 0);
 
       return {
         adName: ad.name,
         adCode: ad.code,
-        totalPremium: ad.premium + agentsTotal,
-        totalCases: ad.cases + agentsCases,
-        agents: agentsUnderAD
+        totalPremium: ad.premium + agentsTotal + agmsTotal,
+        totalCases: ad.cases + agentsCases + agmsCases,
+        agms: agmsUnderAD,
+        agents: agentsUnderAD,
+        recruited_by: ad.recruited_by
       };
     });
 
-    const sortedADs = adProductionList.sort((a, b) => b.totalPremium - a.totalPremium);
-    setAdProduction(sortedADs);
+    return adProductionList.sort((a, b) => b.totalPremium - a.totalPremium);
+  };
+
+  const buildAGMHierarchy = (): AGMEntry[] => {
+    const agms = leaderboardData.AGM.map(agm => ({
+      name: agm.name,
+      code: agm.agentCode,
+      premium: agm.premium,
+      cases: agm.cases,
+      recruited_by: getRecruitedByName(agm.agentCode)
+    }));
+
+    // Get all regular agents
+    const agentsMap = new Map<string, AgentEntry>();
+    
+    leaderboardData.GAD.forEach(person => {
+      const rankUpper = String(person.rank_title).toUpperCase();
+      const isAD = rankUpper.includes("AGENCY DIRECTOR") || rankUpper.includes("AD");
+      const isAGM = rankUpper.includes("AGENCY GROWTH MANAGER") || rankUpper.includes("AGM");
+      const isGAD = rankUpper.includes("GROUP AGENCY DIRECTOR") || rankUpper.includes("GAD");
+      
+      if (!isAD && !isAGM && !isGAD) {
+        agentsMap.set(person.agentCode, {
+          name: person.name,
+          agentCode: person.agentCode,
+          premium: person.premium,
+          cases: person.cases,
+          rank: person.rank_title,
+          recruited_by: getRecruitedByName(person.agentCode)
+        });
+      }
+    });
+
+    const agmProductionList: AGMEntry[] = agms.map(agm => {
+      const agentsUnderAGM: AgentEntry[] = [];
+      
+      agentsMap.forEach((agent, agentCode) => {
+        const profile = profilesMap.get(agentCode);
+        if (profile) {
+          const isUnderThisAGM = 
+            (profile.introducer_name && 
+              (profile.introducer_name === agm.name || 
+               profile.introducer_name === agm.code)) ||
+            (profile.leader_name && 
+              (profile.leader_name === agm.name || 
+               profile.leader_name === agm.code));
+          
+          if (isUnderThisAGM) {
+            agentsUnderAGM.push(agent);
+          }
+        }
+      });
+
+      const agentsTotal = agentsUnderAGM.reduce((sum, agent) => sum + agent.premium, 0);
+      const agentsCases = agentsUnderAGM.reduce((sum, agent) => sum + agent.cases, 0);
+
+      return {
+        name: agm.name,
+        agentCode: agm.code,
+        premium: agm.premium + agentsTotal,
+        cases: agm.cases + agentsCases,
+        agents: agentsUnderAGM,
+        recruited_by: agm.recruited_by
+      };
+    });
+
+    return agmProductionList.sort((a, b) => b.premium - a.premium);
+  };
+
+  const updateADTabLeaderboard = (adResults: ADProduction[]) => {
+    const updatedADLeaderboard = adResults.map((ad, index) => ({
+      rank: index + 1,
+      name: ad.adName,
+      agentCode: ad.adCode,
+      cases: ad.totalCases,
+      premium: ad.totalPremium,
+      rank_title: "AD",
+      isCurrentUser: currentUserCode === ad.adCode,
+    }));
+    
+    setLeaderboardData(prev => ({
+      ...prev,
+      AD: updatedADLeaderboard
+    }));
   };
 
   const fetchAllCasesWithPagination = async (table: string, select: string, pageSize: number = 1000) => {
@@ -373,16 +559,15 @@ export default function Leaderboards() {
   const fetchRealLeaderboard = async () => {
     try {
       setLoadingData(true);
+      setHierarchiesBuilt(false);
       
-      // Get total count first
       const { count: totalCasesCount, error: countError } = await supabase
         .from('cases')
         .select('*', { count: 'exact', head: true });
 
       if (countError) throw countError;
-      console.log("📊 REAL total cases in database:", totalCasesCount);
+      console.log("📊 Total cases in database:", totalCasesCount);
 
-      // Fetch ALL profiles
       const { data: profilesData, error: profilesError } = await supabase
         .from('profiles')
         .select('*');
@@ -395,23 +580,19 @@ export default function Leaderboards() {
       });
       setProfilesMap(profileMap);
 
-      // Fetch ALL cases with dates using pagination
       const allCasesWithDates = await fetchAllCasesWithPagination(
         'cases', 
         'premium, submission_date_timestamp, agent_id, credited_agent_id'
       );
 
-      console.log("📊 TOTAL cases fetched with pagination:", allCasesWithDates.length);
-
       const formattedCases = allCasesWithDates.map(c => ({
         premium: Number(c.premium || 0),
         submission_date_timestamp: c.submission_date_timestamp,
-        agent_id: c.agent_id || c.credited_agent_id // Use credited_agent_id if available
+        agent_id: c.agent_id || c.credited_agent_id
       }));
       
       setAllCases(formattedCases);
 
-      // Fetch ALL cases data with pagination
       const allCasesData = await fetchAllCasesWithPagination(
         'cases',
         'premium, agent_id, credited_agent_id'
@@ -425,7 +606,6 @@ export default function Leaderboards() {
 
         allCasesData.forEach((c: any) => {
           const amt = Number(c.premium || 0);
-          // Use credited_agent_id if available, otherwise agent_id
           const agentId = c.credited_agent_id || c.agent_id;
           
           if (profileMap.has(agentId)) {
@@ -438,11 +618,6 @@ export default function Leaderboards() {
             orphanedTotal += amt;
           }
         });
-
-        console.log("📊 Matched total:", matchedTotal);
-        console.log("📊 Orphaned total:", orphanedTotal);
-        console.log("📊 Combined total:", matchedTotal + orphanedTotal);
-        console.log("📊 Expected total from count:", totalCasesCount);
 
         setOrphanedCases(orphanedCount);
         setOrphanedPremium(orphanedTotal);
@@ -477,18 +652,14 @@ export default function Leaderboards() {
 
           categories["GAD"].push(entry);
 
-          // Apply hierarchy for categorization
           const rankUpper = String(rankTitle).toUpperCase();
           
-          // AD categorization
           if (rankUpper.includes("AGENCY DIRECTOR") || rankUpper.includes("AD")) {
             categories["AD"].push(entry);
           } 
-          // AGM categorization
           else if (rankUpper.includes("AGENCY GROWTH MANAGER") || rankUpper.includes("AGM")) {
             categories["AGM"].push(entry);
           } 
-          // Agent categorization (exclude GAD and AD/AGM)
           else if (!rankUpper.includes("GROUP AGENCY DIRECTOR") && 
                    !rankUpper.includes("GAD") && 
                    !rankUpper.includes("AGENCY DIRECTOR") && 
@@ -499,11 +670,12 @@ export default function Leaderboards() {
           }
         });
 
-        // Sort and rank each category
-        Object.keys(categories).forEach(cat => {
-          categories[cat].sort((a, b) => b.premium - a.premium);
-          categories[cat] = categories[cat].map((item, index) => ({ ...item, rank: index + 1 }));
-        });
+        // Sort basic categories
+        categories["GAD"].sort((a, b) => b.premium - a.premium);
+        categories["GAD"] = categories["GAD"].map((item, index) => ({ ...item, rank: index + 1 }));
+        
+        categories["Agt"].sort((a, b) => b.premium - a.premium);
+        categories["Agt"] = categories["Agt"].map((item, index) => ({ ...item, rank: index + 1 }));
 
         setLeaderboardData(categories);
       }
@@ -516,7 +688,7 @@ export default function Leaderboards() {
 
   const handleExportCSV = () => {
     const currentData = leaderboardData[activeCategory] || [];
-    const headers = ["Rank", "Name", "Agent Code", "Rank Title", "Total Cases", "Total AFYC", "Leader Name", "Introducer Name"];
+    const headers = ["Rank", "Name", "Agent Code", "Rank Title", "Total Cases", "Total AFYC"];
     const csvContent = [
       headers.join(","),
       ...currentData.map(entry => [
@@ -525,9 +697,7 @@ export default function Leaderboards() {
         entry.agentCode, 
         `"${entry.rank_title}"`,
         entry.cases, 
-        entry.premium.toFixed(2),
-        `"${entry.leader_name || ''}"`,
-        `"${entry.introducer_name || ''}"`
+        entry.premium.toFixed(0),
       ].join(","))
     ].join("\n");
     const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
@@ -552,7 +722,7 @@ export default function Leaderboards() {
               <Trophy className="h-7 w-7 text-yellow-500" />
               Live Leaderboards
             </h1>
-            <p className="text-muted-foreground">Real-time rankings across all rank categories</p>
+            <p className="text-muted-foreground">Real-time rankings with hierarchical production attribution</p>
           </div>
           <div className="flex items-center gap-2">
             {currentUserCode && (
@@ -593,7 +763,7 @@ export default function Leaderboards() {
                 </div>
               ) : cat.id === "GAD" ? (
                 <div className="space-y-6">
-                  {/* GAD tab content - unchanged */}
+                  {/* Database Statistics */}
                   <Card className="bg-blue-50 border-blue-200">
                     <CardHeader className="pb-2">
                       <CardTitle className="text-lg flex items-center gap-2 text-blue-700">
@@ -603,54 +773,16 @@ export default function Leaderboards() {
                     </CardHeader>
                     <CardContent>
                       <div className="grid grid-cols-3 gap-4 text-sm">
-                        <div className="relative group">
-                          <div className="flex items-center gap-1">
-                            <p className="text-blue-600 font-medium">Total Cases</p>
-                            <div className="relative">
-                              <Info className="h-3 w-3 text-blue-400 cursor-help" />
-                              <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2 py-1 bg-gray-800 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-10 pointer-events-none">
-                                Total number of cases in the database
-                              </div>
-                            </div>
-                          </div>
-                          <p className="text-xl font-bold text-blue-800">{dbStats.total}</p>
-                        </div>
-                        
-                        <div className="relative group">
-                          <div className="flex items-center gap-1">
-                            <p className="text-green-600 font-medium">With Premium</p>
-                            <div className="relative">
-                              <Info className="h-3 w-3 text-green-400 cursor-help" />
-                              <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2 py-1 bg-gray-800 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-10 pointer-events-none">
-                                Cases with premium value greater than 0
-                              </div>
-                            </div>
-                          </div>
-                          <p className="text-xl font-bold text-green-800">{dbStats.withPremium}</p>
-                        </div>
-                        
-                        <div className="relative group">
-                          <div className="flex items-center gap-1">
-                            <p className="text-orange-600 font-medium">Zero Premium</p>
-                            <div className="relative">
-                              <Info className="h-3 w-3 text-orange-400 cursor-help" />
-                              <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2 py-1 bg-gray-800 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-10 pointer-events-none">
-                                Cases with premium = 0 or null (may need attention)
-                              </div>
-                            </div>
-                          </div>
-                          <p className="text-xl font-bold text-orange-800">{dbStats.withoutPremium}</p>
-                        </div>
+                        <div><p className="text-blue-600 font-medium">Total Cases</p><p className="text-xl font-bold text-blue-800">{dbStats.total}</p></div>
+                        <div><p className="text-green-600 font-medium">With Premium</p><p className="text-xl font-bold text-green-800">{dbStats.withPremium}</p></div>
+                        <div><p className="text-orange-600 font-medium">Zero Premium</p><p className="text-xl font-bold text-orange-800">{dbStats.withoutPremium}</p></div>
                       </div>
                     </CardContent>
                   </Card>
 
-                  {/* Debug Info */}
                   {debugInfo && (
                     <Card className="bg-yellow-50 border-yellow-200">
-                      <CardContent className="p-2">
-                        <p className="text-xs font-mono">{debugInfo}</p>
-                      </CardContent>
+                      <CardContent className="p-2"><p className="text-xs font-mono">{debugInfo}</p></CardContent>
                     </Card>
                   )}
 
@@ -658,68 +790,17 @@ export default function Leaderboards() {
                   <Card className="bg-gradient-to-br from-primary/10 to-primary/5 border-primary/20">
                     <CardContent className="p-8">
                       <div className="grid md:grid-cols-2 gap-8">
-                        <div className="relative group">
-                          <div className="flex items-center gap-2">
-                            <p className="text-sm font-medium text-primary/80 mb-2">Total Group Production</p>
-                            <div className="relative">
-                              <Info className="h-3 w-3 text-primary/40 cursor-help" />
-                              <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2 py-1 bg-gray-800 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-10 pointer-events-none">
-                                Sum of all AFYC from all cases in the system
-                              </div>
-                            </div>
-                          </div>
-                          <p className="text-4xl font-bold text-primary">{formatAFYC(totalGroupProduction)} AFYC</p>
-                          <p className="text-sm text-muted-foreground mt-2">Across {totalGroupCases} cases</p>
-                        </div>
-                        
-                        <div className="relative group">
-                          <div className="flex items-center gap-2">
-                            <p className="text-sm font-medium text-primary/80 mb-2">Active Members</p>
-                            <div className="relative">
-                              <Info className="h-3 w-3 text-primary/40 cursor-help" />
-                              <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2 py-1 bg-gray-800 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-10 pointer-events-none">
-                                Number of agents with profiles in the system
-                              </div>
-                            </div>
-                          </div>
-                          <p className="text-4xl font-bold text-primary">{leaderboardData.GAD.length}</p>
-                          <p className="text-sm text-muted-foreground mt-2">In SuperAchiever Group</p>
-                        </div>
+                        <div><p className="text-sm font-medium text-primary/80 mb-2">Total Group Production</p><p className="text-4xl font-bold text-primary">{formatAFYC(totalGroupProduction)} AFYC</p><p className="text-sm text-muted-foreground mt-2">Across {totalGroupCases} cases</p></div>
+                        <div><p className="text-sm font-medium text-primary/80 mb-2">Active Members</p><p className="text-4xl font-bold text-primary">{leaderboardData.GAD.length}</p><p className="text-sm text-muted-foreground mt-2">In SuperAchiever Group</p></div>
                       </div>
                     </CardContent>
                   </Card>
 
-                  {/* Unattributed Production Section */}
+                  {/* Unattributed Production */}
                   {orphanedCases > 0 && (
                     <Card className="border-2 border-orange-200 bg-orange-50/50">
-                      <CardHeader className="pb-2">
-                        <CardTitle className="text-lg flex items-center gap-2 text-orange-700">
-                          <AlertCircle className="h-5 w-5" />
-                          Unattributed Production
-                        </CardTitle>
-                      </CardHeader>
-                      <CardContent>
-                        <div className="flex items-center justify-between p-4 rounded-lg bg-white/50">
-                          <div>
-                            <div className="flex items-center gap-2">
-                              <p className="text-sm font-medium text-orange-700">Cases without Agent Profiles</p>
-                              <div className="relative group">
-                                <Info className="h-3 w-3 text-orange-400 cursor-help" />
-                                <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2 py-1 bg-gray-800 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-10 pointer-events-none">
-                                  Cases where agent_id doesn't match any profile in the database
-                                </div>
-                              </div>
-                            </div>
-                            <p className="text-xs text-orange-600 mt-1">
-                              These cases exist but are not linked to any agent profile
-                            </p>
-                          </div>
-                          <div className="text-right">
-                            <p className="text-lg font-bold text-orange-700">{formatAFYC(orphanedPremium)} AFYC</p>
-                            <p className="text-xs text-orange-600">{orphanedCases} cases</p>
-                          </div>
-                        </div>
-                      </CardContent>
+                      <CardHeader className="pb-2"><CardTitle className="text-lg flex items-center gap-2 text-orange-700"><AlertCircle className="h-5 w-5" />Unattributed Production</CardTitle></CardHeader>
+                      <CardContent><div className="flex items-center justify-between p-4 rounded-lg bg-white/50"><div><p className="text-sm font-medium text-orange-700">Cases without Agent Profiles</p><p className="text-xs text-orange-600 mt-1">These cases exist but are not linked to any agent profile</p></div><div className="text-right"><p className="text-lg font-bold text-orange-700">{formatAFYC(orphanedPremium)} AFYC</p><p className="text-xs text-orange-600">{orphanedCases} cases</p></div></div></CardContent>
                     </Card>
                   )}
 
@@ -728,104 +809,45 @@ export default function Leaderboards() {
                     <CardHeader className="flex flex-row items-center justify-between">
                       <CardTitle className="text-lg">Production Trend</CardTitle>
                       <Select value={timeFilter} onValueChange={(value: any) => setTimeFilter(value)}>
-                        <SelectTrigger className="w-[120px]">
-                          <Calendar className="h-4 w-4 mr-2" />
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="day">Daily</SelectItem>
-                          <SelectItem value="month">Monthly</SelectItem>
-                          <SelectItem value="year">Yearly</SelectItem>
-                        </SelectContent>
+                        <SelectTrigger className="w-[120px]"><Calendar className="h-4 w-4 mr-2" /><SelectValue /></SelectTrigger>
+                        <SelectContent><SelectItem value="day">Daily</SelectItem><SelectItem value="month">Monthly</SelectItem><SelectItem value="year">Yearly</SelectItem></SelectContent>
                       </Select>
                     </CardHeader>
-                    <CardContent>
-                      <div className="h-[300px]">
-                        <ResponsiveContainer width="100%" height="100%">
-                          <LineChart data={productionData}>
-                            <CartesianGrid strokeDasharray="3 3" />
-                            <XAxis dataKey="period" />
-                            <YAxis />
-                            <Tooltip 
-                              formatter={(value: any) => [`${formatAFYC(value)} AFYC`, 'Production']}
-                            />
-                            <Legend />
-                            <Line 
-                              type="monotone" 
-                              dataKey="total" 
-                              stroke="#8884d8" 
-                              name="Total Production"
-                              strokeWidth={2}
-                              dot={{ r: 4 }}
-                              activeDot={{ r: 6 }}
-                            />
-                          </LineChart>
-                        </ResponsiveContainer>
-                      </div>
-                    </CardContent>
+                    <CardContent><div className="h-[300px]"><ResponsiveContainer width="100%" height="100%"><LineChart data={productionData}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="period" /><YAxis /><Tooltip formatter={(value: any) => [`${formatAFYC(value)} AFYC`, 'Production']} /><Legend /><Line type="monotone" dataKey="total" stroke="#8884d8" name="Total Production" strokeWidth={2} dot={{ r: 4 }} activeDot={{ r: 6 }} /></LineChart></ResponsiveContainer></div></CardContent>
                   </Card>
 
                   {/* AD Production List */}
                   <Card>
-                    <CardHeader>
-                      <CardTitle className="text-lg">AD Production Summary</CardTitle>
-                    </CardHeader>
+                    <CardHeader><CardTitle className="text-lg">AD Production Summary (Includes recruited AGMs + Agents)</CardTitle></CardHeader>
                     <CardContent>
                       <div className="space-y-3">
-                        {adProduction.length === 0 ? (
-                          <div className="text-center py-8 text-muted-foreground">
-                            No AD data available
-                          </div>
-                        ) : (
+                        {adProduction.length === 0 ? <div className="text-center py-8 text-muted-foreground">No AD data available</div> : 
                           adProduction.map((ad, index) => (
-                            <div key={ad.adCode}>
-                              <div
-                                className="flex items-center gap-4 p-4 rounded-xl border bg-card hover:bg-accent/5 cursor-pointer transition-all"
-                                onClick={() => {
-                                  setSelectedAD(ad);
-                                  setDialogOpen(true);
-                                }}
-                              >
-                                <div className="flex items-center justify-center w-8">
-                                  {getRankIcon(index + 1)}
-                                </div>
-                                <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center font-bold text-primary">
-                                  {ad.adName.charAt(0)}
-                                </div>
-                                <div className="flex-1">
-                                  <p className="font-bold">{ad.adName}</p>
-                                  <p className="text-xs text-muted-foreground font-mono">{ad.adCode}</p>
-                                </div>
-                                <div className="text-right">
-                                  <p className="text-sm font-black text-primary">
-                                    {formatAFYC(ad.totalPremium)} AFYC
-                                  </p>
-                                  <p className="text-xs text-muted-foreground">
-                                    {ad.totalCases} cases • {ad.agents.length} agents
-                                  </p>
-                                </div>
-                                <ChevronRight className="h-5 w-5 text-muted-foreground" />
+                            <div key={ad.adCode} className="flex items-center gap-4 p-4 rounded-xl border bg-card hover:bg-accent/5 cursor-pointer transition-all" onClick={() => { setSelectedAD(ad); setDialogOpen(true); }}>
+                              <div className="flex items-center justify-center w-8">{getRankIcon(index + 1)}</div>
+                              <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center font-bold text-primary">{ad.adName.charAt(0)}</div>
+                              <div className="flex-1">
+                                <p className="font-bold">{ad.adName}</p>
+                                <p className="text-xs text-muted-foreground font-mono">{ad.adCode}</p>
                               </div>
+                              <div className="text-right">
+                                <p className="text-sm font-black text-primary">{formatAFYC(ad.totalPremium)} AFYC</p>
+                                <p className="text-xs text-muted-foreground">{ad.totalCases} cases • {ad.agms.length} AGMs • {ad.agents.length} agents</p>
+                              </div>
+                              <ChevronRight className="h-5 w-5 text-muted-foreground" />
                             </div>
                           ))
-                        )}
+                        }
                       </div>
                     </CardContent>
                   </Card>
                 </div>
-              ) : currentData.length === 0 ? (
-                <div className="text-center py-20 bg-muted/20 rounded-xl border-2 border-dashed">
-                  <Trophy className="h-12 w-12 mx-auto mb-4 opacity-20" />
-                  <p className="text-lg font-medium">No records found for this category</p>
-                </div>
-              ) : (
+              ) : cat.id === "AD" ? (
                 <div className="grid gap-6 lg:grid-cols-3">
-                  {/* Top 3 Podium */}
+                  {/* Top 3 Podium - Always show top 3 ADs */}
                   <div className="lg:col-span-3">
                     <Card className="shadow-soft overflow-hidden border-none bg-gradient-to-br from-slate-50 to-slate-100">
-                      <div className="bg-primary/5 p-4 border-b">
-                        <h3 className="font-semibold text-primary">{cat.description} Rankings</h3>
-                      </div>
+                      <div className="bg-primary/5 p-4 border-b"><h3 className="font-semibold text-primary">{cat.description} Rankings</h3></div>
                       <CardContent className="p-8">
                         <div className="flex flex-col md:flex-row items-end justify-center gap-8 mb-4">
                           {currentData[1] && (
@@ -874,49 +896,141 @@ export default function Leaderboards() {
                     </Card>
                   </div>
 
-                  {/* Full Leaderboard List with IDs for scrolling */}
+                  {/* Full AD Leaderboard List - Shows ALL ADs */}
                   <Card className="lg:col-span-3 shadow-soft border-none">
-                    <CardHeader>
-                      <CardTitle className="text-lg">Full Leaderboard</CardTitle>
-                    </CardHeader>
+                    <CardHeader><CardTitle className="text-lg">Full AD Leaderboard (Includes Hierarchy)</CardTitle></CardHeader>
+                    <CardContent className="space-y-3">
+                      {currentData.length === 0 ? (
+                        <div className="text-center py-8 text-muted-foreground">No AD data available</div>
+                      ) : (
+                        currentData.map((entry) => (
+                          <div
+                            id={`user-${entry.agentCode}`}
+                            key={entry.agentCode}
+                            className={cn(
+                              "flex items-center gap-4 rounded-xl border p-4 transition-all hover:translate-x-1 scroll-mt-20",
+                              entry.isCurrentUser ? "bg-primary/10 border-primary ring-1 ring-primary/20" : "bg-card border-slate-100",
+                              entry.rank <= 3 && !entry.isCurrentUser && "bg-primary/[0.02] border-primary/10"
+                            )}
+                          >
+                            <div className="flex items-center justify-center w-8 italic text-slate-300 font-black text-sm">
+                              {entry.rank}.
+                            </div>
+                            <div className="h-10 w-10 rounded-full bg-muted flex items-center justify-center font-bold text-muted-foreground">
+                              {entry.name.charAt(0)}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <p className={cn("font-bold truncate text-sm uppercase", entry.isCurrentUser && "text-primary")}>
+                                {entry.name} {entry.isCurrentUser && "(You)"}
+                              </p>
+                              <div className="flex items-center gap-2">
+                                <p className="text-[10px] text-muted-foreground font-bold uppercase tracking-widest">{entry.agentCode}</p>
+                                <span className="text-[8px] bg-primary/10 text-primary px-1.5 py-0.5 rounded-full">{entry.rank_title}</span>
+                              </div>
+                            </div>
+                            <div className="text-right">
+                              <p className="text-sm font-black">
+                                {formatAFYC(entry.premium)} <span className="text-[10px] text-primary">AFYC</span>
+                              </p>
+                              <p className="text-[10px] text-muted-foreground font-bold uppercase">{entry.cases} cases</p>
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </CardContent>
+                  </Card>
+                </div>
+              ) : cat.id === "AGM" ? (
+                <div className="grid gap-6 lg:grid-cols-3">
+                  <div className="lg:col-span-3">
+                    <Card className="shadow-soft overflow-hidden border-none bg-gradient-to-br from-slate-50 to-slate-100">
+                      <div className="bg-primary/5 p-4 border-b"><h3 className="font-semibold text-primary">{cat.description}</h3></div>
+                      <CardContent className="p-8">
+                        <div className="flex flex-col md:flex-row items-end justify-center gap-8 mb-4">
+                          {agmProductionList[1] && (<div className="flex flex-col items-center"><div className="w-20 h-20 rounded-full bg-slate-200 flex items-center justify-center text-slate-700 font-bold text-xl mb-2 border-4 border-white shadow-md">{agmProductionList[1].name.charAt(0)}</div><Medal className="h-6 w-6 text-slate-400 mb-1" /><p className="font-semibold text-sm truncate max-w-[120px]">{agmProductionList[1].name}</p><p className="text-[10px] font-bold text-slate-400 mb-2">{agmProductionList[1].agentCode}</p><div className="bg-white/80 backdrop-blur px-3 py-1 rounded-full text-xs font-bold border">{formatAFYC(agmProductionList[1].premium)} AFYC</div></div>)}
+                          {agmProductionList[0] && (<div className="flex flex-col items-center pb-6"><div className="w-28 h-28 rounded-full bg-primary flex items-center justify-center text-white font-bold text-3xl mb-2 border-4 border-white shadow-xl ring-4 ring-primary/10">{agmProductionList[0].name.charAt(0)}</div><Crown className="h-10 w-10 text-yellow-500 mb-1" /><p className="font-bold text-lg truncate max-w-[150px]">{agmProductionList[0].name}</p><p className="text-xs font-bold text-slate-400 mb-3">{agmProductionList[0].agentCode}</p><div className="bg-primary px-4 py-2 rounded-xl text-sm font-bold text-white shadow-lg">{formatAFYC(agmProductionList[0].premium)} AFYC</div></div>)}
+                          {agmProductionList[2] && (<div className="flex flex-col items-center"><div className="w-20 h-20 rounded-full bg-orange-50 flex items-center justify-center text-orange-700 font-bold text-xl mb-2 border-4 border-white shadow-md">{agmProductionList[2].name.charAt(0)}</div><Award className="h-6 w-6 text-orange-400 mb-1" /><p className="font-semibold text-sm truncate max-w-[120px]">{agmProductionList[2].name}</p><p className="text-[10px] font-bold text-slate-400 mb-2">{agmProductionList[2].agentCode}</p><div className="bg-white/80 backdrop-blur px-3 py-1 rounded-full text-xs font-bold border">{formatAFYC(agmProductionList[2].premium)} AFYC</div></div>)}
+                        </div>
+                      </CardContent>
+                    </Card>
+                  </div>
+
+                  <Card className="lg:col-span-3 shadow-soft border-none">
+                    <CardHeader><CardTitle className="text-lg">Full AGM Leaderboard (Includes recruited Agents)</CardTitle></CardHeader>
+                    <CardContent className="space-y-3">
+                      {agmProductionList.length === 0 ? (
+                        <div className="text-center py-8 text-muted-foreground">No AGM data available</div>
+                      ) : (
+                        agmProductionList.map((agm, index) => (
+                          <div key={agm.agentCode} className="flex items-center gap-4 rounded-xl border p-4 transition-all hover:translate-x-1 cursor-pointer" onClick={() => { setSelectedAGM(agm); setAgmDialogOpen(true); }}>
+                            <div className="flex items-center justify-center w-8 italic text-slate-300 font-black text-sm">{index + 1}.</div>
+                            <div className="h-10 w-10 rounded-full bg-emerald-100 flex items-center justify-center font-bold text-emerald-700">{agm.name.charAt(0)}</div>
+                            <div className="flex-1 min-w-0">
+                              <p className="font-bold truncate text-sm uppercase">{agm.name}</p>
+                              <div className="flex items-center gap-2">
+                                <p className="text-[10px] text-muted-foreground font-bold uppercase tracking-widest">{agm.agentCode}</p>
+                                <span className="text-[8px] bg-primary/10 text-primary px-1.5 py-0.5 rounded-full">AGM</span>
+                              </div>
+                              {agm.recruited_by && (
+                                <div className="flex items-center gap-1 mt-0.5">
+                                  <UserPlus className="h-2.5 w-2.5 text-emerald-500" />
+                                  <p className="text-[9px] text-emerald-600">↑ Recruited by: {agm.recruited_by}</p>
+                                </div>
+                              )}
+                            </div>
+                            <div className="text-right">
+                              <p className="text-sm font-black text-emerald-600">{formatAFYC(agm.premium)} AFYC</p>
+                              <p className="text-[10px] text-muted-foreground font-bold uppercase">{agm.cases} cases • {agm.agents.length} agents</p>
+                            </div>
+                            <ChevronRight className="h-5 w-5 text-muted-foreground" />
+                          </div>
+                        ))
+                      )}
+                    </CardContent>
+                  </Card>
+                </div>
+              ) : currentData.length === 0 ? (
+                <div className="text-center py-20 bg-muted/20 rounded-xl border-2 border-dashed">
+                  <Trophy className="h-12 w-12 mx-auto mb-4 opacity-20" />
+                  <p className="text-lg font-medium">No records found for this category</p>
+                </div>
+              ) : (
+                <div className="grid gap-6 lg:grid-cols-3">
+                  <div className="lg:col-span-3">
+                    <Card className="shadow-soft overflow-hidden border-none bg-gradient-to-br from-slate-50 to-slate-100">
+                      <div className="bg-primary/5 p-4 border-b"><h3 className="font-semibold text-primary">{cat.description} Rankings</h3></div>
+                      <CardContent className="p-8">
+                        <div className="flex flex-col md:flex-row items-end justify-center gap-8 mb-4">
+                          {currentData[1] && (<div className="flex flex-col items-center"><div className="w-20 h-20 rounded-full bg-slate-200 flex items-center justify-center text-slate-700 font-bold text-xl mb-2 border-4 border-white shadow-md">{currentData[1].name.charAt(0)}</div><Medal className="h-6 w-6 text-slate-400 mb-1" /><p className="font-semibold text-sm truncate max-w-[120px]">{currentData[1].name}</p><p className="text-[10px] font-bold text-slate-400 mb-2">{currentData[1].agentCode}</p><div className="bg-white/80 backdrop-blur px-3 py-1 rounded-full text-xs font-bold border">{formatAFYC(currentData[1].premium)} AFYC</div></div>)}
+                          {currentData[0] && (<div className="flex flex-col items-center pb-6"><div className="w-28 h-28 rounded-full bg-primary flex items-center justify-center text-white font-bold text-3xl mb-2 border-4 border-white shadow-xl ring-4 ring-primary/10">{currentData[0].name.charAt(0)}</div><Crown className="h-10 w-10 text-yellow-500 mb-1" /><p className="font-bold text-lg truncate max-w-[150px]">{currentData[0].name}</p><p className="text-xs font-bold text-slate-400 mb-3">{currentData[0].agentCode}</p><div className="bg-primary px-4 py-2 rounded-xl text-sm font-bold text-white shadow-lg">{formatAFYC(currentData[0].premium)} AFYC</div></div>)}
+                          {currentData[2] && (<div className="flex flex-col items-center"><div className="w-20 h-20 rounded-full bg-orange-50 flex items-center justify-center text-orange-700 font-bold text-xl mb-2 border-4 border-white shadow-md">{currentData[2].name.charAt(0)}</div><Award className="h-6 w-6 text-orange-400 mb-1" /><p className="font-semibold text-sm truncate max-w-[120px]">{currentData[2].name}</p><p className="text-[10px] font-bold text-slate-400 mb-2">{currentData[2].agentCode}</p><div className="bg-white/80 backdrop-blur px-3 py-1 rounded-full text-xs font-bold border">{formatAFYC(currentData[2].premium)} AFYC</div></div>)}
+                        </div>
+                      </CardContent>
+                    </Card>
+                  </div>
+
+                  <Card className="lg:col-span-3 shadow-soft border-none">
+                    <CardHeader><CardTitle className="text-lg">Full Leaderboard</CardTitle></CardHeader>
                     <CardContent className="space-y-3">
                       {currentData.map((entry) => (
-                        <div
-                          id={`user-${entry.agentCode}`}
-                          key={entry.agentCode}
-                          className={cn(
-                            "flex items-center gap-4 rounded-xl border p-4 transition-all hover:translate-x-1 scroll-mt-20",
-                            entry.isCurrentUser ? "bg-primary/10 border-primary ring-1 ring-primary/20" : "bg-card border-slate-100",
-                            entry.rank <= 3 && !entry.isCurrentUser && "bg-primary/[0.02] border-primary/10"
-                          )}
-                        >
-                          <div className="flex items-center justify-center w-8 italic text-slate-300 font-black text-sm">
-                            {entry.rank}.
-                          </div>
-                          <div className="h-10 w-10 rounded-full bg-muted flex items-center justify-center font-bold text-muted-foreground">
-                            {entry.name.charAt(0)}
-                          </div>
+                        <div id={`user-${entry.agentCode}`} key={entry.agentCode} className={cn("flex items-center gap-4 rounded-xl border p-4 transition-all hover:translate-x-1 scroll-mt-20", entry.isCurrentUser ? "bg-primary/10 border-primary ring-1 ring-primary/20" : "bg-card border-slate-100", entry.rank <= 3 && !entry.isCurrentUser && "bg-primary/[0.02] border-primary/10")}>
+                          <div className="flex items-center justify-center w-8 italic text-slate-300 font-black text-sm">{entry.rank}.</div>
+                          <div className="h-10 w-10 rounded-full bg-muted flex items-center justify-center font-bold text-muted-foreground">{entry.name.charAt(0)}</div>
                           <div className="flex-1 min-w-0">
-                            <p className={cn("font-bold truncate text-sm uppercase", entry.isCurrentUser && "text-primary")}>
-                              {entry.name} {entry.isCurrentUser && "(You)"}
-                            </p>
+                            <p className={cn("font-bold truncate text-sm uppercase", entry.isCurrentUser && "text-primary")}>{entry.name} {entry.isCurrentUser && "(You)"}</p>
                             <div className="flex items-center gap-2">
                               <p className="text-[10px] text-muted-foreground font-bold uppercase tracking-widest">{entry.agentCode}</p>
-                              <span className="text-[8px] bg-primary/10 text-primary px-1.5 py-0.5 rounded-full">
-                                {entry.rank_title}
-                              </span>
+                              <span className="text-[8px] bg-primary/10 text-primary px-1.5 py-0.5 rounded-full">{entry.rank_title}</span>
                             </div>
-                            {/* Show hierarchy info for context */}
                             {(entry.leader_name || entry.introducer_name) && (
-                              <p className="text-[8px] text-muted-foreground mt-1">
-                                ↑ {entry.leader_name || entry.introducer_name}
-                              </p>
+                              <div className="flex items-center gap-1 mt-0.5">
+                                <UserPlus className="h-2.5 w-2.5 text-emerald-500" />
+                                <p className="text-[9px] text-emerald-600">↑ Recruited by: {entry.leader_name || entry.introducer_name}</p>
+                              </div>
                             )}
                           </div>
                           <div className="text-right">
-                            <p className="text-sm font-black">
-                              {formatAFYC(entry.premium)} <span className="text-[10px] text-primary">AFYC</span>
-                            </p>
+                            <p className="text-sm font-black">{formatAFYC(entry.premium)} <span className="text-[10px] text-primary">AFYC</span></p>
                             <p className="text-[10px] text-muted-foreground font-bold uppercase">{entry.cases} cases</p>
                           </div>
                         </div>
@@ -929,60 +1043,112 @@ export default function Leaderboards() {
           ))}
         </Tabs>
 
-        {/* AD Agent Details Dialog */}
+        {/* AD Details Dialog - No Recruited By banner (removed as requested) */}
         <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-          <DialogContent className="max-w-3xl">
-            <DialogHeader>
-              <DialogTitle className="flex items-center gap-2">
-                <Building2 className="h-5 w-5" />
-                {selectedAD?.adName} - Agency Details
-              </DialogTitle>
-            </DialogHeader>
+          <DialogContent className="max-w-4xl max-h-[80vh] overflow-y-auto">
+            <DialogHeader><DialogTitle className="flex items-center gap-2"><Building2 className="h-5 w-5" />{selectedAD?.adName} - Agency Details (Includes recruited AGMs + Agents)</DialogTitle></DialogHeader>
             {selectedAD && (
               <div className="space-y-4">
                 <div className="grid grid-cols-2 gap-4">
-                  <Card>
-                    <CardContent className="p-4">
-                      <p className="text-sm text-muted-foreground">Total Production</p>
-                      <p className="text-2xl font-bold text-primary">{formatAFYC(selectedAD.totalPremium)} AFYC</p>
-                    </CardContent>
-                  </Card>
-                  <Card>
-                    <CardContent className="p-4">
-                      <p className="text-sm text-muted-foreground">Total Cases</p>
-                      <p className="text-2xl font-bold text-primary">{selectedAD.totalCases}</p>
-                    </CardContent>
-                  </Card>
+                  <Card><CardContent className="p-4"><p className="text-sm text-muted-foreground">Total Production</p><p className="text-2xl font-bold text-primary">{formatAFYC(selectedAD.totalPremium)} AFYC</p></CardContent></Card>
+                  <Card><CardContent className="p-4"><p className="text-sm text-muted-foreground">Total Cases</p><p className="text-2xl font-bold text-primary">{selectedAD.totalCases}</p></CardContent></Card>
                 </div>
-
-                <div className="border rounded-lg">
-                  <div className="bg-muted/50 p-3 border-b">
-                    <div className="grid grid-cols-12 gap-2 text-sm font-medium">
-                      <div className="col-span-4">Agent Name</div>
-                      <div className="col-span-2">Agent Code</div>
-                      <div className="col-span-2">Rank</div>
-                      <div className="col-span-2 text-right">Cases</div>
-                      <div className="col-span-2 text-right">Production</div>
+                
+                {selectedAD.agms.length > 0 && (
+                  <div className="border rounded-lg">
+                    <div className="bg-primary/10 p-3 border-b"><h4 className="font-semibold text-primary">AGMs Under {selectedAD.adName}</h4></div>
+                    <div className="divide-y max-h-[300px] overflow-y-auto">
+                      {selectedAD.agms.map((agm, idx) => (
+                        <div key={idx} className="p-3 hover:bg-muted/30 cursor-pointer" onClick={() => { setSelectedAGM(agm); setAgmDialogOpen(true); }}>
+                          <div className="flex justify-between items-center">
+                            <div>
+                              <p className="font-medium">{agm.name}</p>
+                              <p className="text-xs text-muted-foreground font-mono">{agm.agentCode}</p>
+                              <p className="text-xs text-muted-foreground mt-1">{agm.agents.length} agents under this AGM</p>
+                            </div>
+                            <div className="text-right">
+                              <p className="text-sm font-bold text-primary">{formatAFYC(agm.premium + agm.agents.reduce((s, a) => s + a.premium, 0))} AFYC</p>
+                              <p className="text-xs text-muted-foreground">{agm.cases + agm.agents.reduce((s, a) => s + a.cases, 0)} cases</p>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
                     </div>
                   </div>
-                  <div className="divide-y max-h-[400px] overflow-y-auto">
-                    {selectedAD.agents.map((agent, idx) => (
-                      <div key={idx} className="p-3 hover:bg-muted/30">
-                        <div className="grid grid-cols-12 gap-2 text-sm">
-                          <div className="col-span-4 font-medium truncate">{agent.name}</div>
-                          <div className="col-span-2 font-mono text-xs text-muted-foreground">{agent.agentCode}</div>
-                          <div className="col-span-2 text-xs">
-                            <span className="bg-primary/10 text-primary px-1.5 py-0.5 rounded-full text-[8px]">
-                              {agent.rank}
-                            </span>
+                )}
+                
+                {selectedAD.agents.length > 0 && (
+                  <div className="border rounded-lg">
+                    <div className="bg-muted/50 p-3 border-b"><div className="grid grid-cols-12 gap-2 text-sm font-medium"><div className="col-span-3">Agent Name</div><div className="col-span-2">Agent Code</div><div className="col-span-2">Rank</div><div className="col-span-2 text-right">Cases</div><div className="col-span-3 text-right">Production</div></div></div>
+                    <div className="divide-y max-h-[300px] overflow-y-auto">
+                      {selectedAD.agents.map((agent, idx) => (
+                        <div key={idx} className="p-3 hover:bg-muted/30">
+                          <div className="grid grid-cols-12 gap-2 text-sm">
+                            <div className="col-span-3 font-medium truncate">{agent.name}</div>
+                            <div className="col-span-2 font-mono text-xs text-muted-foreground">{agent.agentCode}</div>
+                            <div className="col-span-2 text-xs"><span className="bg-primary/10 text-primary px-1.5 py-0.5 rounded-full text-[8px]">{agent.rank}</span></div>
+                            <div className="col-span-2 text-right font-bold">{agent.cases}</div>
+                            <div className="col-span-3 text-right font-bold text-primary">{formatAFYC(agent.premium)}</div>
                           </div>
-                          <div className="col-span-2 text-right font-bold">{agent.cases}</div>
-                          <div className="col-span-2 text-right font-bold text-primary">{formatAFYC(agent.premium)}</div>
                         </div>
-                      </div>
-                    ))}
+                      ))}
+                    </div>
                   </div>
+                )}
+              </div>
+            )}
+          </DialogContent>
+        </Dialog>
+
+        {/* AGM Details Dialog - Keep Recruited By */}
+        <Dialog open={agmDialogOpen} onOpenChange={setAgmDialogOpen}>
+          <DialogContent className="max-w-3xl max-h-[80vh] overflow-y-auto">
+            <DialogHeader><DialogTitle className="flex items-center gap-2"><Building2 className="h-5 w-5 text-emerald-600" />{selectedAGM?.name} - AGM Details (Recruited Agents)</DialogTitle></DialogHeader>
+            {selectedAGM && (
+              <div className="space-y-4">
+                <div className="grid grid-cols-2 gap-4">
+                  <Card><CardContent className="p-4"><p className="text-sm text-muted-foreground">Total Production (Including Agents)</p><p className="text-2xl font-bold text-emerald-600">{formatAFYC(selectedAGM.premium)} AFYC</p></CardContent></Card>
+                  <Card><CardContent className="p-4"><p className="text-sm text-muted-foreground">Total Cases (Including Agents)</p><p className="text-2xl font-bold text-emerald-600">{selectedAGM.cases}</p></CardContent></Card>
                 </div>
+                
+                {selectedAGM.recruited_by && (
+                  <div className="bg-emerald-50 p-3 rounded-lg border border-emerald-200">
+                    <div className="flex items-center gap-2">
+                      <UserPlus className="h-4 w-4 text-emerald-600" />
+                      <span className="text-sm font-medium text-emerald-800">Recruited by:</span>
+                      <span className="text-sm text-emerald-700">{selectedAGM.recruited_by}</span>
+                    </div>
+                  </div>
+                )}
+                
+                {selectedAGM.agents.length > 0 && (
+                  <div className="border rounded-lg">
+                    <div className="bg-muted/50 p-3 border-b"><div className="grid grid-cols-12 gap-2 text-sm font-medium"><div className="col-span-3">Agent Name</div><div className="col-span-2">Agent Code</div><div className="col-span-2">Rank</div><div className="col-span-2 text-right">Cases</div><div className="col-span-3 text-right">Production</div></div></div>
+                    <div className="divide-y max-h-[300px] overflow-y-auto">
+                      {selectedAGM.agents.map((agent, idx) => (
+                        <div key={idx} className="p-3 hover:bg-muted/30">
+                          <div className="grid grid-cols-12 gap-2 text-sm">
+                            <div className="col-span-3 font-medium truncate">{agent.name}</div>
+                            <div className="col-span-2 font-mono text-xs text-muted-foreground">{agent.agentCode}</div>
+                            <div className="col-span-2 text-xs"><span className="bg-primary/10 text-primary px-1.5 py-0.5 rounded-full text-[8px]">{agent.rank}</span></div>
+                            <div className="col-span-2 text-right font-bold">{agent.cases}</div>
+                            <div className="col-span-3 text-right font-bold text-primary">{formatAFYC(agent.premium)}</div>
+                          </div>
+                          {agent.recruited_by && (
+                            <div className="flex items-center gap-1 mt-1">
+                              <UserPlus className="h-2 w-2 text-emerald-500" />
+                              <p className="text-[8px] text-emerald-600">Recruited by: {agent.recruited_by}</p>
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                
+                {selectedAGM.agents.length === 0 && (
+                  <div className="text-center py-8 text-muted-foreground">No direct agents recruited by this AGM</div>
+                )}
               </div>
             )}
           </DialogContent>

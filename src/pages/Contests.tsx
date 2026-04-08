@@ -6,7 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { supabase } from "@/integrations/supabase/client";
-import { Plane, Smartphone, Zap, CheckCircle2, AlertCircle, Trophy, Ticket, Gift } from "lucide-react";
+import { Plane, Smartphone, Zap, CheckCircle2, AlertCircle, Trophy, Ticket, Gift, TrendingUp, Sparkles, Users, Layers } from "lucide-react";
 import { format, parseISO, isAfter, differenceInMonths, startOfMonth } from "date-fns";
 
 // --- 1. INTERFACES ---
@@ -48,17 +48,13 @@ function ContestSkeleton() {
         <div className="h-10 w-64 bg-slate-200 rounded-lg" />
         <div className="h-4 w-48 bg-slate-100 rounded-md" />
       </header>
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-        {[1, 2, 3, 4].map((i) => (
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+        {[1, 2, 3, 4, 5, 6, 7].map((i) => (
           <div key={i} className="h-[220px] bg-white rounded-[2rem] border border-slate-100 p-8 space-y-4">
             <div className="h-12 w-12 bg-slate-100 rounded-2xl" />
             <div className="space-y-2">
               <div className="h-6 w-3/4 bg-slate-100 rounded" />
               <div className="h-3 w-1/2 bg-slate-50 rounded" />
-            </div>
-            <div className="pt-4 space-y-2">
-              <div className="h-4 w-full bg-slate-100 rounded" />
-              <div className="h-2 w-full bg-slate-50 rounded-full" />
             </div>
           </div>
         ))}
@@ -152,10 +148,17 @@ export default function Contests() {
 
   const openModal = (type: string) => {
     setActiveContest(type);
-    if (type === "enac") setActiveSegment("ROOKIE");
-    else if (type === "rs") setActiveSegment("Level 1");
-    else if (type === "consistent") setActiveSegment("Tier 1");
-    else setActiveSegment("All");
+    if (type === "growbig" || type === "growbiggroup" || type === "consistentclub") {
+        setActiveSegment("Monthly");
+    } else if (type === "enac") {
+        setActiveSegment("ROOKIE");
+    } else if (type === "rs") {
+        setActiveSegment("Level 1");
+    } else if (type === "consistent") {
+        setActiveSegment("Tier 1");
+    } else {
+        setActiveSegment("All");
+    }
     setIsDialogOpen(true);
   };
 
@@ -167,18 +170,21 @@ export default function Contests() {
         <div className="relative p-6 space-y-10 max-w-[1400px] mx-auto min-h-screen transition-opacity duration-500">
           <header className="flex flex-col md:flex-row justify-between items-start md:items-end gap-4">
             <div className="space-y-1">
-              <h1 className="text-4xl font-black text-slate-900 tracking-tighter uppercase italic">
-                Elite <span className="text-blue-600">Contests</span>
+              <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
+                Contest Page
               </h1>
-              <p className="text-slate-500 font-medium tracking-tight italic">Performance Status for {agentData.full_name}</p>
+              <p className="text-muted-foreground"> Contest Ranking for {agentData.full_name}</p>
             </div>
           </header>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-            <StatCard title="AIT Experience" icon={<Plane className="w-5 h-5" />} afyc={agentData.totalAfyc} target={100000} color="blue" onClick={() => openModal('experience')} />
-            <StatCard title="AIT RS 2026" icon={<Smartphone className="w-5 h-5" />} afyc={agentData.totalAfyc} target={60000} color="indigo" onClick={() => openModal('rs')} />
-            <StatCard title="eNAC 2026" icon={<Trophy className="w-5 h-5" />} afyc={agentData.caseCount} target={agentData.category === 'ROOKIE' ? 8 : 26} unit="Cases" color="amber" onClick={() => openModal('enac')} />
-            <StatCard title="Consistent Club" icon={<Zap className="w-5 h-5" />} afyc={agentData.totalAfyc} target={36000} color="emerald" onClick={() => openModal('consistent')} />
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+            <StatCard title="AIT Experience" image="/danang.jpeg" afyc={agentData.totalAfyc} target={100000} color="blue" onClick={() => openModal('experience')} />
+            <StatCard title="AIT RS 2026" image="/surabaya.jpeg" afyc={agentData.totalAfyc} target={60000} color="indigo" onClick={() => openModal('rs')} />
+            <StatCard title="eNAC 2026" image="/enac.jpeg" afyc={agentData.caseCount} target={agentData.category === 'ROOKIE' ? 8 : 26} unit="Cases" color="amber" onClick={() => openModal('enac')} />
+            <StatCard title="Consistent Club Rookie Year 1" image="/consistentclub.jpeg" afyc={agentData.totalAfyc} target={36000} color="emerald" onClick={() => openModal('consistent')} />
+            <StatCard title="Consistent Club" image="/consistentclub.jpeg" afyc={agentData.totalAfyc} target={30000} color="violet" onClick={() => openModal('consistentclub')} />
+            <StatCard title="Grow Big (Direct)" image="/consistentclub.jpeg" afyc={agentData.totalAfyc} target={90000} color="rose" onClick={() => openModal('growbig')} />
+            <StatCard title="Grow Big (Group)" image="/consistentclub.jpeg" afyc={agentData.totalAfyc} target={100000} color="sky" onClick={() => openModal('growbiggroup')} />
           </div>
 
           <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
@@ -187,6 +193,9 @@ export default function Contests() {
               {activeContest === 'experience' && <ExperienceView data={agentData} segment={activeSegment} setSegment={setActiveSegment} leaderboard={afycLeaderboard} allProfiles={allProfiles} />}
               {activeContest === 'rs' && <RSView data={agentData} segment={activeSegment} setSegment={setActiveSegment} leaderboard={afycLeaderboard} />}
               {activeContest === 'consistent' && <ConsistentView data={agentData} segment={activeSegment} setSegment={setActiveSegment} leaderboard={afycLeaderboard} />}
+              {activeContest === 'consistentclub' && <ConsistentClubView data={agentData} segment={activeSegment} setSegment={setActiveSegment} leaderboard={afycLeaderboard} />}
+              {activeContest === 'growbig' && <GrowBigView data={agentData} segment={activeSegment} setSegment={setActiveSegment} leaderboard={afycLeaderboard} />}
+              {activeContest === 'growbiggroup' && <GrowBigGroupView data={agentData} segment={activeSegment} setSegment={setActiveSegment} leaderboard={afycLeaderboard} />}
               <div className="p-6 bg-slate-50 border-t flex justify-center">
                 <Button onClick={() => setIsDialogOpen(false)} variant="ghost" className="rounded-full px-10 font-black text-[11px] uppercase tracking-[0.2em] text-slate-400">Close</Button>
               </div>
@@ -198,28 +207,37 @@ export default function Contests() {
   );
 }
 
-// --- 4. DYNAMIC MODAL VIEWS (Rest of components remain the same) ---
+// --- 4. DYNAMIC MODAL VIEWS ---
 
 function ExperienceView({ data, segment, setSegment, leaderboard, allProfiles }: any) {
   const isRookie = data.category === 'ROOKIE';
   const passedPreReq = isRookie ? (data.janAfyc >= 5000 && data.febAfyc >= 5000) : (data.janAfyc >= 10000 && data.febAfyc >= 10000);
 
   const filteredLeaderboard = useMemo(() => {
-      return leaderboard.filter((agent: any) => {
-          const p = allProfiles.find((ap: any) => ap.agent_code === agent.id);
-          if (!p || segment === "All") return true;
-          return p.rank === segment;
-      });
+    return leaderboard.filter((agent: any) => {
+      const p = allProfiles.find((ap: any) => ap.agent_code === agent.id);
+      if (segment === "All") return true;
+      if (!p) return false;
+      const rank = p.rank?.toLowerCase();
+      if (segment === "PP") return rank === "agent";
+      if (segment === "AD") return rank === "ad" || rank === "agency director";
+      if (segment === "GAD") return rank === "gad" || rank === "group agency director";
+      return true;
+    });
   }, [segment, leaderboard, allProfiles]);
 
   return (
     <div className="flex flex-col">
-      <div className="p-10 bg-[#0F172A] text-white flex justify-between items-center">
-        <div>
+      <div 
+        className="p-10 text-white flex justify-between items-center relative overflow-hidden h-44"
+        style={{ backgroundImage: 'url("/danang.jpeg")', backgroundSize: 'cover', backgroundPosition: 'center 40%' }}
+      >
+        <div className="absolute inset-0 bg-slate-900/50 z-0" />
+        <div className="relative z-10">
           <Badge className="bg-blue-600 mb-2 border-none px-3 py-1 rounded-md text-[10px] font-black uppercase tracking-widest leading-none">AIT Experience 2026</Badge>
           <DialogTitle className="text-4xl font-black italic tracking-tighter leading-tight">Leaderboard Ranking</DialogTitle>
         </div>
-        <div className="relative z-50 flex gap-1 bg-white/10 p-1 rounded-full border border-white/20">
+        <div className="relative z-10 flex gap-1 bg-white/10 p-1 rounded-full border border-white/20 backdrop-blur-md">
           {["All", "PP", "AD", "GAD"].map((opt) => (
             <Button key={opt} onClick={() => setSegment(opt)} className={`h-9 px-6 text-[10px] font-black rounded-full transition-all ${segment === opt ? "bg-white text-slate-900 shadow-xl" : "bg-transparent text-white/40 hover:text-white"}`}>{opt}</Button>
           ))}
@@ -232,14 +250,12 @@ function ExperienceView({ data, segment, setSegment, leaderboard, allProfiles }:
             <div className="space-y-1">
               <CheckItem label="Pre-requisite (Jan & Feb Production)" done={passedPreReq} />
               <CheckItem label="Minimum AFYC: RM 100,000" done={data.totalAfyc >= 100000} />
-              <p className="text-[9px] text-slate-400 italic mt-2 uppercase">* Rookie: RM 5k/mo | Leader: RM 10k/mo (Jan & Feb)</p>
             </div>
           </div>
           <div className="p-8 bg-slate-900 rounded-[2rem] text-center shadow-xl border border-slate-800">
              <Plane className="w-8 h-8 text-blue-400 mx-auto mb-3 opacity-80" />
              <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest mb-1">Campaign Prize</p>
              <h2 className="text-3xl font-black text-white italic tracking-tighter uppercase leading-tight">AIT Experience Trip 2026</h2>
-             <p className="text-[9px] text-slate-600 mt-2 uppercase font-medium italic tracking-wider">Flight + Accommodation Included</p>
           </div>
         </div>
         <ContestLeaderboard list={filteredLeaderboard} currentAgentCode={data.agent_code} />
@@ -251,17 +267,18 @@ function ExperienceView({ data, segment, setSegment, leaderboard, allProfiles }:
 function RSView({ data, segment, setSegment, leaderboard }: any) {
   const isL1 = segment === "Level 1";
   const targetAfyc = isL1 ? 30000 : 60000;
-  const targetCases = isL1 ? 3 : 6;
-  const targetCypr = 90;
-
   return (
     <div className="flex flex-col">
-      <div className="p-10 bg-[#0F172A] text-white flex justify-between items-center">
-        <div>
+      <div 
+        className="p-10 text-white flex justify-between items-center relative overflow-hidden h-44"
+        style={{ backgroundImage: 'url("/surabaya.jpeg")', backgroundSize: 'cover', backgroundPosition: 'center 40%' }}
+      >
+        <div className="absolute inset-0 bg-slate-900/50 z-0" />
+        <div className="relative z-10">
           <Badge className="bg-blue-600 mb-2 border-none px-3 py-1 rounded-md text-[10px] font-black uppercase tracking-widest leading-none">AIT RS 2026</Badge>
           <DialogTitle className="text-4xl font-black italic tracking-tighter leading-tight">Retail Sales Ranking</DialogTitle>
         </div>
-        <div className="relative z-50 flex gap-1 bg-white/10 p-1 rounded-full border border-white/20">
+        <div className="relative z-10 flex gap-1 bg-white/10 p-1 rounded-full border border-white/20 backdrop-blur-md">
           {["Level 1", "Level 2"].map((opt) => (
             <Button key={opt} onClick={() => setSegment(opt)} className={`h-9 px-6 text-[10px] font-black rounded-full transition-all ${segment === opt ? "bg-white text-slate-900 shadow-xl" : "bg-transparent text-white/40 hover:text-white"}`}>{opt}</Button>
           ))}
@@ -273,16 +290,12 @@ function RSView({ data, segment, setSegment, leaderboard }: any) {
             <h4 className="text-[10px] font-black text-indigo-600 uppercase tracking-widest mb-4 border-b border-indigo-100 pb-2">{isL1 ? "Level 1 Requirements" : "Level 2 Requirements"}</h4>
             <div className="space-y-1">
               <CheckItem label={`Minimum AFYC: RM ${targetAfyc.toLocaleString()}`} done={data.totalAfyc >= targetAfyc} />
-              <CheckItem label={`Minimum Number of Cases: ${targetCases}`} done={data.caseCount >= targetCases} />
-              <CheckItem label={`Minimum CYPR: ${targetCypr}%`} done={(data.cypr || 0) >= targetCypr} />
-              {isL1 && <CheckItem label="Attended VB101" done={!!data.attended_vb101} />}
+              <CheckItem label={`Minimum Number of Cases: ${isL1 ? 3 : 6}`} done={data.caseCount >= (isL1 ? 3 : 6)} />
             </div>
           </div>
           <div className="p-8 bg-slate-900 rounded-[2rem] text-center shadow-xl border border-slate-800">
              <Gift className="w-8 h-8 text-amber-400 mx-auto mb-3 opacity-80" />
-             <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest mb-1">Expected Reward</p>
              <h2 className="text-3xl font-black text-white italic tracking-tighter">{isL1 ? "Ipad Voucher (RM 1,800)" : "1 Ticket to Yogyakarta"}</h2>
-             <p className="text-[9px] text-slate-600 mt-2 uppercase font-medium italic">Terms & conditions apply</p>
           </div>
         </div>
         <ContestLeaderboard list={leaderboard} currentAgentCode={data.agent_code} />
@@ -295,9 +308,16 @@ function ENACView({ data, segment, setSegment, leaderboard }: any) {
   const filteredLeaderboard = leaderboard.filter((agent: any) => agent.category === segment);
   return (
     <div className="flex flex-col">
-      <div className="p-10 bg-[#0F172A] text-white flex justify-between items-center">
-        <div><Badge className="bg-blue-600 mb-2 border-none px-3 py-1 rounded-md text-[10px] font-black uppercase tracking-widest leading-none">eNAC 2026</Badge><DialogTitle className="text-4xl font-black italic tracking-tighter leading-tight">Segment Ranking</DialogTitle></div>
-        <div className="relative z-50 flex gap-1 bg-white/10 p-1 rounded-full border border-white/20">
+      <div 
+        className="p-10 text-white flex justify-between items-center relative overflow-hidden h-44"
+        style={{ backgroundImage: 'url("/enac.jpeg")', backgroundSize: 'cover', backgroundPosition: 'center 40%' }}
+      >
+        <div className="absolute inset-0 bg-slate-900/50 z-0" />
+        <div className="relative z-10">
+          <Badge className="bg-blue-600 mb-2 border-none px-3 py-1 rounded-md text-[10px] font-black uppercase tracking-widest leading-none">eNAC 2026</Badge>
+          <DialogTitle className="text-4xl font-black italic tracking-tighter leading-tight">Segment Ranking</DialogTitle>
+        </div>
+        <div className="relative z-10 flex gap-1 bg-white/10 p-1 rounded-full border border-white/20 backdrop-blur-md">
           {["ROOKIE", "PP"].map((opt) => (
             <Button key={opt} onClick={() => setSegment(opt)} className={`h-9 px-6 text-[10px] font-black rounded-full transition-all ${segment === opt ? "bg-white text-slate-900 shadow-xl" : "bg-transparent text-white/40 hover:text-white"}`}>{opt}</Button>
           ))}
@@ -324,6 +344,181 @@ function ENACView({ data, segment, setSegment, leaderboard }: any) {
   );
 }
 
+function ConsistentClubView({ data, segment, setSegment, leaderboard }: any) {
+  return (
+    <div className="flex flex-col">
+      <div 
+        className="p-10 text-white flex justify-between items-center relative overflow-hidden h-44"
+        style={{ backgroundImage: 'url("/consistentclub.jpeg")', backgroundSize: 'cover', backgroundPosition: 'center' }}
+      >
+        <div className="absolute inset-0 bg-slate-900/50 z-0" />
+        <div className="relative z-10">
+          <Badge className="bg-violet-600 mb-2 border-none px-3 py-1 rounded-md text-[10px] font-black uppercase tracking-widest leading-none">Consistent Club</Badge>
+          <DialogTitle className="text-4xl font-black italic tracking-tighter leading-tight">Consistency Challenge</DialogTitle>
+        </div>
+        <div className="relative z-50 flex gap-1 bg-white/10 p-1 rounded-full border border-white/20 backdrop-blur-md">
+          {["Monthly", "Quarterly"].map((opt) => (
+            <Button key={opt} onClick={() => setSegment(opt)} className={`h-9 px-6 text-[10px] font-black rounded-full transition-all ${segment === opt ? "bg-white text-slate-900 shadow-xl" : "bg-transparent text-white/40 hover:text-white"}`}>{opt}</Button>
+          ))}
+        </div>
+      </div>
+      <div className="p-10 grid md:grid-cols-2 gap-10">
+        <div className="space-y-6">
+          <div className="p-8 bg-violet-50/50 border border-violet-100 rounded-[2rem]">
+            <h4 className="text-[10px] font-black text-violet-600 uppercase tracking-widest mb-4 border-b border-violet-100 pb-2">{segment} Prize Tiers</h4>
+            <div className="space-y-3">
+              <div className="flex justify-between items-center p-3 bg-white rounded-2xl border border-violet-100"><span className="text-xs font-bold">1st Place Reward</span><span className="text-sm font-black text-violet-600">RM 1,000</span></div>
+              <div className="flex justify-between items-center p-3 bg-white rounded-2xl border border-violet-100"><span className="text-xs font-bold">Consolation Reward</span><span className="text-sm font-black text-violet-600">RM 100</span></div>
+            </div>
+          </div>
+          <div className="p-8 bg-slate-900 rounded-[2rem] text-center shadow-xl border border-slate-800">
+             <Trophy className="w-8 h-8 text-violet-400 mx-auto mb-3 opacity-80" />
+             <h2 className="text-3xl font-black text-white italic tracking-tighter uppercase leading-tight">Consistency Pay-out</h2>
+          </div>
+        </div>
+        <ContestLeaderboard list={leaderboard} currentAgentCode={data.agent_code} />
+      </div>
+    </div>
+  );
+}
+
+function GrowBigGroupView({ data, segment, setSegment, leaderboard }: any) {
+  const isMonthly = segment === "Monthly";
+
+  return (
+    <div className="flex flex-col">
+      <div 
+        className="p-10 text-white flex justify-between items-center relative overflow-hidden h-44"
+        style={{ backgroundImage: 'url("/consistentclub.jpeg")', backgroundSize: 'cover', backgroundPosition: 'center' }}
+      >
+        <div className="absolute inset-0 bg-slate-900/50 z-0" />
+        <div className="relative z-10">
+          <Badge className="bg-sky-600 mb-2 border-none px-3 py-1 rounded-md text-[10px] font-black uppercase tracking-widest leading-none">Grow Big With Quality (Group)</Badge>
+          <DialogTitle className="text-4xl font-black italic tracking-tighter leading-tight">Group Growth Ranking</DialogTitle>
+        </div>
+        <div className="relative z-50 flex gap-1 bg-white/10 p-1 rounded-full border border-white/20 backdrop-blur-md">
+          {["Monthly", "Quarterly"].map((opt) => (
+            <Button key={opt} onClick={() => setSegment(opt)} className={`h-9 px-6 text-[10px] font-black rounded-full transition-all ${segment === opt ? "bg-white text-slate-900 shadow-xl" : "bg-transparent text-white/40 hover:text-white"}`}>{opt}</Button>
+          ))}
+        </div>
+      </div>
+      <div className="p-10 grid md:grid-cols-2 gap-10">
+        <div className="space-y-6">
+          <div className="p-8 bg-sky-50/50 border border-sky-100 rounded-[2rem]">
+            <h4 className="text-[10px] font-black text-sky-600 uppercase tracking-widest mb-4 border-b border-sky-100 pb-2">{segment} Prize Requirements</h4>
+            
+            <div className="space-y-6">
+              {/* Prize Tiers for Group Category */}
+              <div className="space-y-2">
+                <div className="flex justify-between items-center bg-white p-3 rounded-xl border border-sky-100 shadow-sm">
+                  <span className="text-xs font-bold text-slate-900">1st Prize: {isMonthly ? "RM 30,000" : "RM 90,000"}</span>
+                </div>
+                <ul className="text-[10px] space-y-1 text-slate-500 ml-2">
+                  <li>• AFYC Increment: {isMonthly ? "40% or RM 600,000 (Higher)" : "40% or RM 2,000,000 (Higher)"}</li>
+                  <li>• Min. Active Agents: 20 {isMonthly ? "" : "Monthly"}</li>
+                  <li>• Min. New Recruits: {isMonthly ? "20" : "70"}</li>
+                </ul>
+              </div>
+
+              <div className="space-y-2">
+                <div className="flex justify-between items-center bg-white p-3 rounded-xl border border-sky-100 shadow-sm">
+                  <span className="text-xs font-bold text-slate-900">2nd Prize: {isMonthly ? "RM 20,000" : "RM 60,000"}</span>
+                </div>
+                <ul className="text-[10px] space-y-1 text-slate-500 ml-2">
+                  <li>• AFYC Increment: {isMonthly ? "30% or RM 400,000 (Higher)" : "30% or RM 1,500,000 (Higher)"}</li>
+                  <li>• Min. Active Agents: 15 {isMonthly ? "" : "Monthly"}</li>
+                  <li>• Min. New Recruits: {isMonthly ? "12" : "20"}</li>
+                </ul>
+              </div>
+
+              <div className="space-y-2">
+                <div className="flex justify-between items-center bg-white p-3 rounded-xl border border-sky-100 shadow-sm">
+                  <span className="text-xs font-bold text-slate-900">3rd Prize: {isMonthly ? "RM 10,000" : "RM 30,000"}</span>
+                </div>
+                <ul className="text-[10px] space-y-1 text-slate-500 ml-2">
+                  <li>• AFYC Increment: {isMonthly ? "20% or RM 200,000 (Higher)" : "20% or RM 700,000 (Higher)"}</li>
+                  <li>• Min. Active Agents: 8 {isMonthly ? "" : "Monthly"}</li>
+                  <li>• Min. New Recruits: {isMonthly ? "8" : "20"}</li>
+                </ul>
+              </div>
+            </div>
+          </div>
+        </div>
+        <ContestLeaderboard list={leaderboard} currentAgentCode={data.agent_code} />
+      </div>
+    </div>
+  );
+}
+
+function GrowBigView({ data, segment, setSegment, leaderboard }: any) {
+  const isMonthly = segment === "Monthly";
+
+  return (
+    <div className="flex flex-col">
+      <div 
+        className="p-10 text-white flex justify-between items-center relative overflow-hidden h-44"
+        style={{ backgroundImage: 'url("/consistentclub.jpeg")', backgroundSize: 'cover', backgroundPosition: 'center' }}
+      >
+        <div className="absolute inset-0 bg-slate-900/50 z-0" />
+        <div className="relative z-10">
+          <Badge className="bg-rose-600 mb-2 border-none px-3 py-1 rounded-md text-[10px] font-black uppercase tracking-widest leading-none">Grow Big With Quality (Direct)</Badge>
+          <DialogTitle className="text-4xl font-black italic tracking-tighter leading-tight">Personal Growth Ranking</DialogTitle>
+        </div>
+        <div className="relative z-50 flex gap-1 bg-white/10 p-1 rounded-full border border-white/20 backdrop-blur-md">
+          {["Monthly", "Quarterly"].map((opt) => (
+            <Button key={opt} onClick={() => setSegment(opt)} className={`h-9 px-6 text-[10px] font-black rounded-full transition-all ${segment === opt ? "bg-white text-slate-900 shadow-xl" : "bg-transparent text-white/40 hover:text-white"}`}>{opt}</Button>
+          ))}
+        </div>
+      </div>
+      
+      <div className="p-10 grid md:grid-cols-2 gap-10">
+        <div className="space-y-6">
+          <div className="p-8 bg-rose-50/50 border border-rose-100 rounded-[2rem]">
+            <h4 className="text-[10px] font-black text-rose-600 uppercase tracking-widest mb-4 border-b border-rose-100 pb-2">{segment} Prize Requirements</h4>
+            
+            <div className="space-y-6">
+              {/* Prize Tiers for Direct Category */}
+              <div className="space-y-2">
+                <div className="flex justify-between items-center bg-white p-3 rounded-xl border border-rose-100 shadow-sm">
+                  <span className="text-xs font-bold text-slate-900">1st Prize: {isMonthly ? "RM 30,000" : "RM 90,000"}</span>
+                </div>
+                <ul className="text-[10px] space-y-1 text-slate-500 ml-2">
+                  <li>• AFYC Increment: {isMonthly ? "40% or RM 300,000 (Higher)" : "40% or RM 1,000,000 (Higher)"}</li>
+                  <li>• Min. Active Agents: 12 {isMonthly ? "" : "Monthly"}</li>
+                  <li>• Min. New Recruits: {isMonthly ? "10" : "35"}</li>
+                </ul>
+              </div>
+
+              <div className="space-y-2">
+                <div className="flex justify-between items-center bg-white p-3 rounded-xl border border-rose-100 shadow-sm">
+                  <span className="text-xs font-bold text-slate-900">2nd Prize: {isMonthly ? "RM 20,000" : "RM 60,000"}</span>
+                </div>
+                <ul className="text-[10px] space-y-1 text-slate-500 ml-2">
+                  <li>• AFYC Increment: {isMonthly ? "30% or RM 200,000 (Higher)" : "30% or RM 700,000 (Higher)"}</li>
+                  <li>• Min. Active Agents: 8 {isMonthly ? "" : "Monthly"}</li>
+                  <li>• Min. New Recruits: {isMonthly ? "6" : "20"}</li>
+                </ul>
+              </div>
+
+              <div className="space-y-2">
+                <div className="flex justify-between items-center bg-white p-3 rounded-xl border border-rose-100 shadow-sm">
+                  <span className="text-xs font-bold text-slate-900">3rd Prize: {isMonthly ? "RM 10,000" : "RM 30,000"}</span>
+                </div>
+                <ul className="text-[10px] space-y-1 text-slate-500 ml-2">
+                  <li>• AFYC Increment: {isMonthly ? "20% or RM 100,000 (Higher)" : "20% or RM 400,000 (Higher)"}</li>
+                  <li>• Min. Active Agents: 6 {isMonthly ? "" : "Monthly"}</li>
+                  <li>• Min. New Recruits: {isMonthly ? "3" : "10"}</li>
+                </ul>
+              </div>
+            </div>
+          </div>
+        </div>
+        <ContestLeaderboard list={leaderboard} currentAgentCode={data.agent_code} />
+      </div>
+    </div>
+  );
+}
+
 function ConsistentView({ data, segment, setSegment, leaderboard }: any) {
     const isT2 = segment === "Tier 2";
     const totalM0toM3 = (data.monthlyCounts[0] || 0) + (data.monthlyCounts[1] || 0) + (data.monthlyCounts[2] || 0) + (data.monthlyCounts[3] || 0);
@@ -331,9 +526,16 @@ function ConsistentView({ data, segment, setSegment, leaderboard }: any) {
 
     return (
       <div className="flex flex-col">
-        <div className="p-10 bg-[#0F172A] text-white flex justify-between items-center">
-          <div><Badge className="bg-blue-600 mb-2 border-none px-3 py-1 rounded-md text-[10px] font-black uppercase tracking-widest leading-none">Consistent Club</Badge><DialogTitle className="text-4xl font-black italic tracking-tighter leading-tight">Consistency Tracker</DialogTitle></div>
-          <div className="relative z-50 flex gap-1 bg-white/10 p-1 rounded-full border border-white/20">
+        <div 
+          className="p-10 text-white flex justify-between items-center relative overflow-hidden h-44"
+          style={{ backgroundImage: 'url("/consistentclub.jpeg")', backgroundSize: 'cover', backgroundPosition: 'center' }}
+        >
+          <div className="absolute inset-0 bg-slate-900/50 z-0" />
+          <div className="relative z-10">
+            <Badge className="bg-blue-600 mb-2 border-none px-3 py-1 rounded-md text-[10px] font-black uppercase tracking-widest leading-none">Consistent Club Rookie Year 1</Badge>
+            <DialogTitle className="text-4xl font-black italic tracking-tighter leading-tight">Consistency Tracker</DialogTitle>
+          </div>
+          <div className="relative z-50 flex gap-1 bg-white/10 p-1 rounded-full border border-white/20 backdrop-blur-md">
             {["Tier 1", "Tier 2"].map((opt) => (
               <Button key={opt} onClick={() => setSegment(opt)} className={`h-9 px-6 text-[10px] font-black rounded-full transition-all ${segment === opt ? "bg-white text-slate-900 shadow-xl" : "bg-transparent text-white/40 hover:text-white"}`}>{opt}</Button>
             ))}
@@ -343,24 +545,14 @@ function ConsistentView({ data, segment, setSegment, leaderboard }: any) {
           <div className="space-y-6">
             <div className="p-8 bg-indigo-50/50 border border-indigo-100 rounded-[2rem]">
               <h4 className="text-[10px] font-black text-indigo-600 uppercase tracking-widest mb-4 border-b border-indigo-100 pb-2">{isT2 ? "Tier 2 Requirement" : "Tier 1 Requirement"}</h4>
-              {isT2 ? (
-                <div className="space-y-1">
-                   <CheckItem label="Total Cases (Month 0 - Month 3)" done={totalM0toM3 >= 6} />
-                   <p className="text-[10px] text-slate-400 italic mt-2">Current Count: {totalM0toM3} / 6 Cases</p>
-                </div>
-              ) : (
-                <div className="space-y-1">
-                  <CheckItem label="M1 Goal (3 Cases)" done={data.monthlyCounts[0] >= 3} />
-                  <CheckItem label="M2 Goal (3 Cases)" done={data.monthlyCounts[1] >= 3} />
-                  <CheckItem label="M3 Goal (3 Cases)" done={data.monthlyCounts[2] >= 3} />
-                </div>
-              )}
+              <div className="space-y-1">
+                 <CheckItem label="M1 Goal (3 Cases)" done={data.monthlyCounts[0] >= 3} />
+              </div>
             </div>
             <div className="p-8 bg-slate-900 rounded-[2rem] text-center shadow-xl border border-slate-800">
-               <Zap className="w-8 h-8 text-amber-400 mx-auto mb-3 opacity-80" />
-               <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest mb-1">Estimated Club Bonus</p>
-               <h2 className="text-4xl font-black text-emerald-400 tracking-tighter">RM {expectedReward.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</h2>
-               <p className="text-[9px] text-slate-600 mt-2 uppercase font-medium italic">Calculated at 1% of total production</p>
+                <Zap className="w-8 h-8 text-amber-400 mx-auto mb-3 opacity-80" />
+                <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest mb-1">Estimated Club Bonus</p>
+                <h2 className="text-4xl font-black text-emerald-400 tracking-tighter">RM {expectedReward.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</h2>
             </div>
           </div>
           <ContestLeaderboard list={leaderboard} currentAgentCode={data.agent_code} />
@@ -369,25 +561,21 @@ function ConsistentView({ data, segment, setSegment, leaderboard }: any) {
     );
 }
 
-// --- LOGIC HELPERS ---
-function getQualifiedTicket(p1: number, p2: number, category: string): "VIP" | "ORDINARY" | "NONE" {
-  const isRookie = category === 'ROOKIE';
-  const total = p1 + p2;
-  const vipP1 = isRookie ? 6 : 24; const vipP2 = isRookie ? 6 : 24; const vipWash = isRookie ? 14 : 50;
-  if ((p1 >= vipP1 && p2 >= vipP2) || total >= vipWash) return "VIP";
-  const ordP1 = isRookie ? 3 : 12; const ordP2 = isRookie ? 3 : 12; const ordWash = isRookie ? 8 : 26;
-  if ((p1 >= ordP1 && p2 >= ordP2) || total >= ordWash) return "ORDINARY";
-  return "NONE";
-}
-
 // --- SHARED UI ---
-function StatCard({ title, icon, afyc, target, onClick, unit = "RM", color }: any) {
+function StatCard({ title, icon, image, afyc, target, onClick, unit = "RM", color }: any) {
   const progress = Math.min(100, (afyc / target) * 100);
-  const colorMap: any = { blue: "bg-blue-600", indigo: "bg-indigo-600", amber: "bg-amber-500", emerald: "bg-emerald-600" };
+  const colorMap: any = { blue: "bg-blue-600", indigo: "bg-indigo-600", amber: "bg-amber-500", emerald: "bg-emerald-600", rose: "bg-rose-600", sky: "bg-sky-600", violet: "bg-violet-600" };
   return (
     <Card onClick={onClick} className="group relative cursor-pointer border-none bg-white rounded-[2rem] shadow-sm hover:shadow-2xl transition-all duration-500 transform hover:-translate-y-2 overflow-hidden">
       <CardContent className="p-8">
-        <div className="flex justify-between items-start mb-10"><div className={`p-4 ${colorMap[color]} text-white rounded-2xl shadow-lg`}>{icon}</div><Badge variant="ghost" className="text-emerald-500 font-bold text-[10px] uppercase tracking-widest leading-none">Active</Badge></div>
+        <div className="flex justify-between items-start mb-10">
+          <div className={`p-4 ${colorMap[color]} text-white rounded-2xl shadow-lg relative overflow-hidden h-14 w-14 flex items-center justify-center`}>
+            {image ? (
+               <img src={image} alt={title} className="absolute inset-0 w-full h-full object-cover opacity-90 transition-opacity hover:opacity-100" />
+            ) : icon}
+          </div>
+          <Badge variant="ghost" className="text-emerald-500 font-bold text-[10px] uppercase tracking-widest leading-none">Active</Badge>
+        </div>
         <div className="mb-8"><h3 className="text-xl font-black text-slate-900 tracking-tight leading-tight">{title}</h3><p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest leading-none">Campaign 2026</p></div>
         <div className="space-y-4"><div className="flex justify-between items-end"><div className="text-2xl font-black text-slate-900">{unit === "RM" ? "RM" : ""} {afyc.toLocaleString()}</div><div className="text-[10px] font-bold text-slate-400">/ {target.toLocaleString()}</div></div><div className="h-2 w-full bg-slate-100 rounded-full overflow-hidden"><div className={`h-full ${colorMap[color]} transition-all duration-1000`} style={{ width: `${progress}%` }} /></div></div>
       </CardContent>
@@ -416,6 +604,16 @@ function ContestLeaderboard({ list, unit = "RM", currentAgentCode, isEnac = fals
       </div>
     </div>
   );
+}
+
+function getQualifiedTicket(p1: number, p2: number, category: string): "VIP" | "ORDINARY" | "NONE" {
+  const isRookie = category === 'ROOKIE';
+  const total = p1 + p2;
+  const vipP1 = isRookie ? 6 : 24; const vipP2 = isRookie ? 6 : 24; const vipWash = isRookie ? 14 : 50;
+  if ((p1 >= vipP1 && p2 >= vipP2) || total >= vipWash) return "VIP";
+  const ordP1 = isRookie ? 3 : 12; const ordP2 = isRookie ? 3 : 12; const ordWash = isRookie ? 8 : 26;
+  if ((p1 >= ordP1 && p2 >= ordP2) || total >= ordWash) return "ORDINARY";
+  return "NONE";
 }
 
 function CheckItem({ label, done }: any) {
