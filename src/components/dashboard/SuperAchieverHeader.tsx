@@ -8,6 +8,7 @@ interface SuperAchieverHeaderProps {
 
 export function SuperAchieverHeader({ lastUploadDate }: SuperAchieverHeaderProps) {
   const [displayText, setDisplayText] = useState("");
+  const [typingComplete, setTypingComplete] = useState(false);
   const fullText = "SUPERACHIEVER";
   
   useEffect(() => {
@@ -18,6 +19,7 @@ export function SuperAchieverHeader({ lastUploadDate }: SuperAchieverHeaderProps
         i++;
       } else {
         clearInterval(interval);
+        setTypingComplete(true); // Mark typing as complete
       }
     }, 80);
     return () => clearInterval(interval);
@@ -93,17 +95,19 @@ export function SuperAchieverHeader({ lastUploadDate }: SuperAchieverHeaderProps
                     key={index}
                     className="inline-block bg-gradient-to-r from-yellow-400 via-yellow-300 to-amber-400 bg-[length:200%_200%] bg-clip-text text-transparent transition-transform duration-300 hover:scale-110"
                     style={{
+                      // Only apply gradient animation if typing is not complete
+                      animation: typingComplete ? 'none' : 'gradient-shift 2s ease infinite',
                       animationDelay: `${index * 0.05}s`,
-                      animationDuration: "2s",
-                      animationIterationCount: "infinite",
                       display: "inline-block",
                     }}
                   >
                     {char}
                   </span>
                 ))}
-                {/* Animated Cursor - Now inline with text, no extra space */}
-                <span className="inline-block h-12 w-1 animate-blink bg-yellow-400 align-middle" />
+                {/* Animated Cursor - Hide when typing is complete */}
+                {!typingComplete && (
+                  <span className="inline-block h-12 w-1 animate-blink bg-yellow-400 align-middle" />
+                )}
               </h1>
             </div>
 
@@ -186,6 +190,12 @@ export function SuperAchieverHeader({ lastUploadDate }: SuperAchieverHeaderProps
         @keyframes expand-width {
           0% { width: 0%; opacity: 0; }
           100% { width: 100%; opacity: 1; }
+        }
+        
+        @keyframes gradient-shift {
+          0% { background-position: 0% 50%; }
+          50% { background-position: 100% 50%; }
+          100% { background-position: 0% 50%; }
         }
         
         .animate-shoot-star {
