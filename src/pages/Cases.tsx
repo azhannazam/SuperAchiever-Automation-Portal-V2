@@ -117,13 +117,13 @@ const formatDisplayDate = (dateString: string | null): string => {
   return format(date, "dd MMM yyyy");
 };
 
-// Format AFYC
+// Format AFYC/premium values - now returns just the number without "AFYC" suffix
 const formatAFYC = (value: number | null): string => {
-  if (!value) return "0 AFYC";
+  if (!value) return "0";
   return `${value.toLocaleString('en-MY', {
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 0
-  })} AFYC`;
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  })}`;
 };
 
 // Date format for inputs
