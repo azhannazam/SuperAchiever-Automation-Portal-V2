@@ -69,6 +69,9 @@ interface ReportHistory {
 
 interface AgentMasterStats {
   totalAgents: number;
+  activeAgents: number;
+  terminatedAgents: number;
+  suspendedAgents: number;
   lastUpdated: string | null;
   totalCases: number;
 }
@@ -105,6 +108,9 @@ export default function Reports() {
   const [history, setHistory] = useState<ReportHistory[]>([]);
   const [masterStats, setMasterStats] = useState<AgentMasterStats>({
     totalAgents: 0,
+    activeAgents: 0,
+    terminatedAgents: 0,
+    suspendedAgents: 0,
     lastUpdated: null,
     totalCases: 0,
   });
@@ -149,33 +155,59 @@ export default function Reports() {
     }
   }, [API_BASE_URL]);
 
-  // --- Fetch Dashboard Stats ---
+  // --- Fetch Dashboard Stats with Status Filtering ---
   const fetchDashboardStats = useCallback(async () => {
     try {
       const isConnected = await checkApiConnection();
       
-      if (!isConnected) {
-        const [agentResult, casesResult] = await Promise.all([
-          supabase.from("profiles").select("*", { count: "exact", head: true }),
-          supabase.from("cases").select("*", { count: "exact", head: true })
-        ]);
+      // Fetch profiles with status filtering
+      const { data: profilesData, error: profilesError } = await supabase
+        .from("profiles")
+        .select("status");
+      
+      if (!profilesError && profilesData) {
+        // Calculate agent stats based on status
+        const totalAgents = profilesData.length;
+        const activeAgents = profilesData.filter(p => p.status?.toLowerCase() === 'active').length;
+        const terminatedAgents = profilesData.filter(p => p.status?.toLowerCase() === 'terminated').length;
+        const suspendedAgents = profilesData.filter(p => p.status?.toLowerCase() === 'suspended').length;
         
-        setMasterStats({
-          totalAgents: agentResult.count || 0,
+        setMasterStats(prev => ({
+          ...prev,
+          totalAgents,
+          activeAgents,
+          terminatedAgents,
+          suspendedAgents,
+        }));
+      }
+      
+      // Fetch cases count
+      const { count: casesCount, error: casesError } = await supabase
+        .from("cases")
+        .select("*", { count: "exact", head: true });
+      
+      if (!casesError) {
+        setMasterStats(prev => ({
+          ...prev,
+          totalCases: casesCount || 0,
+        }));
+      }
+      
+      if (!isConnected) {
+        setMasterStats(prev => ({
+          ...prev,
           lastUpdated: null,
-          totalCases: casesResult.count || 0,
-        });
+        }));
         return;
       }
       
       const response = await fetch(`${API_BASE_URL}/api/stats`);
       if (response.ok) {
         const data = await response.json();
-        setMasterStats({
-          totalAgents: Number(data.totalAgents) || 0,
+        setMasterStats(prev => ({
+          ...prev,
           lastUpdated: data.lastUpdated || null,
-          totalCases: Number(data.totalCases) || 0,
-        });
+        }));
       }
       
       const historyResponse = await fetch(`${API_BASE_URL}/api/history?limit=10`);
@@ -452,8 +484,8 @@ export default function Reports() {
           </div>
         </div>
 
-        {/* Stats Cards with Modern Design */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        {/* Stats Cards with Modern Design - FIXED to show Active Agents */}
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
           <Card className="relative overflow-hidden group hover:shadow-xl transition-all duration-500 animate-fade-in-up border-none bg-gradient-to-br from-blue-50 to-white">
             <div className="absolute top-0 right-0 w-32 h-32 bg-blue-500/5 rounded-full -translate-y-1/2 translate-x-1/2 group-hover:scale-150 transition-transform duration-700" />
             <CardContent className="p-6 relative z-10">
@@ -461,12 +493,10 @@ export default function Reports() {
                 <div>
                   <p className="text-sm font-medium text-blue-600 mb-1">Total Agents</p>
                   <p className="text-4xl font-bold text-blue-900">{masterStats.totalAgents.toLocaleString()}</p>
-                  {masterStats.lastUpdated && (
-                    <p className="text-xs text-blue-500 mt-2 flex items-center gap-1">
-                      <Clock className="h-3 w-3" />
-                      Updated: {formatDate(masterStats.lastUpdated)}
-                    </p>
-                  )}
+                  <p className="text-xs text-blue-500 mt-2 flex items-center gap-1">
+                    <Users className="h-3 w-3" />
+                    All agents in system
+                  </p>
                 </div>
                 <div className="h-12 w-12 rounded-2xl bg-blue-100 flex items-center justify-center group-hover:scale-110 transition-transform duration-300">
                   <Users className="h-6 w-6 text-blue-600" />
@@ -480,39 +510,109 @@ export default function Reports() {
             <CardContent className="p-6 relative z-10">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm font-medium text-emerald-600 mb-1">Total Cases</p>
-                  <p className="text-4xl font-bold text-emerald-900">{masterStats.totalCases.toLocaleString()}</p>
+                  <p className="text-sm font-medium text-emerald-600 mb-1">Active Agents</p>
+                  <p className="text-4xl font-bold text-emerald-900">{masterStats.activeAgents.toLocaleString()}</p>
                   <p className="text-xs text-emerald-500 mt-2 flex items-center gap-1">
-                    <Database className="h-3 w-3" />
-                    In database
+                    <Zap className="h-3 w-3" />
+                    Currently active
                   </p>
                 </div>
                 <div className="h-12 w-12 rounded-2xl bg-emerald-100 flex items-center justify-center group-hover:scale-110 transition-transform duration-300">
-                  <FileText className="h-6 w-6 text-emerald-600" />
+                  <Zap className="h-6 w-6 text-emerald-600" />
                 </div>
               </div>
             </CardContent>
           </Card>
 
-          <Card className="relative overflow-hidden group hover:shadow-xl transition-all duration-500 animate-fade-in-up border-none bg-gradient-to-br from-purple-50 to-white" style={{ animationDelay: "0.2s" }}>
-            <div className="absolute top-0 right-0 w-32 h-32 bg-purple-500/5 rounded-full -translate-y-1/2 translate-x-1/2 group-hover:scale-150 transition-transform duration-700" />
+          <Card className="relative overflow-hidden group hover:shadow-xl transition-all duration-500 animate-fade-in-up border-none bg-gradient-to-br from-rose-50 to-white" style={{ animationDelay: "0.15s" }}>
+            <div className="absolute top-0 right-0 w-32 h-32 bg-rose-500/5 rounded-full -translate-y-1/2 translate-x-1/2 group-hover:scale-150 transition-transform duration-700" />
             <CardContent className="p-6 relative z-10">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm font-medium text-purple-600 mb-1">Python Scripts</p>
-                  <p className="text-4xl font-bold text-purple-900">3</p>
-                  <p className="text-xs text-purple-500 mt-2 flex items-center gap-1">
-                    <Server className="h-3 w-3" />
-                    Active engines
+                  <p className="text-sm font-medium text-rose-600 mb-1">Terminated</p>
+                  <p className="text-4xl font-bold text-rose-900">{masterStats.terminatedAgents.toLocaleString()}</p>
+                  <p className="text-xs text-rose-500 mt-2 flex items-center gap-1">
+                    <AlertCircle className="h-3 w-3" />
+                    Inactive status
                   </p>
                 </div>
-                <div className="h-12 w-12 rounded-2xl bg-purple-100 flex items-center justify-center group-hover:scale-110 transition-transform duration-300">
-                  <Activity className="h-6 w-6 text-purple-600" />
+                <div className="h-12 w-12 rounded-2xl bg-rose-100 flex items-center justify-center group-hover:scale-110 transition-transform duration-300">
+                  <AlertCircle className="h-6 w-6 text-rose-600" />
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="relative overflow-hidden group hover:shadow-xl transition-all duration-500 animate-fade-in-up border-none bg-gradient-to-br from-amber-50 to-white" style={{ animationDelay: "0.2s" }}>
+            <div className="absolute top-0 right-0 w-32 h-32 bg-amber-500/5 rounded-full -translate-y-1/2 translate-x-1/2 group-hover:scale-150 transition-transform duration-700" />
+            <CardContent className="p-6 relative z-10">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium text-amber-600 mb-1">Suspended</p>
+                  <p className="text-4xl font-bold text-amber-900">{masterStats.suspendedAgents.toLocaleString()}</p>
+                  <p className="text-xs text-amber-500 mt-2 flex items-center gap-1">
+                    <Clock className="h-3 w-3" />
+                    Temporary hold
+                  </p>
+                </div>
+                <div className="h-12 w-12 rounded-2xl bg-amber-100 flex items-center justify-center group-hover:scale-110 transition-transform duration-300">
+                  <Clock className="h-6 w-6 text-amber-600" />
                 </div>
               </div>
             </CardContent>
           </Card>
         </div>
+
+        {/* Second row for Cases and Scripts */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <Card className="relative overflow-hidden group hover:shadow-xl transition-all duration-500 animate-fade-in-up border-none bg-gradient-to-br from-purple-50 to-white" style={{ animationDelay: "0.25s" }}>
+            <div className="absolute top-0 right-0 w-32 h-32 bg-purple-500/5 rounded-full -translate-y-1/2 translate-x-1/2 group-hover:scale-150 transition-transform duration-700" />
+            <CardContent className="p-6 relative z-10">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium text-purple-600 mb-1">Total Cases</p>
+                  <p className="text-4xl font-bold text-purple-900">{masterStats.totalCases.toLocaleString()}</p>
+                  <p className="text-xs text-purple-500 mt-2 flex items-center gap-1">
+                    <Database className="h-3 w-3" />
+                    In database
+                  </p>
+                </div>
+                <div className="h-12 w-12 rounded-2xl bg-purple-100 flex items-center justify-center group-hover:scale-110 transition-transform duration-300">
+                  <FileText className="h-6 w-6 text-purple-600" />
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="relative overflow-hidden group hover:shadow-xl transition-all duration-500 animate-fade-in-up border-none bg-gradient-to-br from-indigo-50 to-white" style={{ animationDelay: "0.3s" }}>
+            <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-500/5 rounded-full -translate-y-1/2 translate-x-1/2 group-hover:scale-150 transition-transform duration-700" />
+            <CardContent className="p-6 relative z-10">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium text-indigo-600 mb-1">Python Scripts</p>
+                  <p className="text-4xl font-bold text-indigo-900">3</p>
+                  <p className="text-xs text-indigo-500 mt-2 flex items-center gap-1">
+                    <Server className="h-3 w-3" />
+                    Active engines
+                  </p>
+                </div>
+                <div className="h-12 w-12 rounded-2xl bg-indigo-100 flex items-center justify-center group-hover:scale-110 transition-transform duration-300">
+                  <Activity className="h-6 w-6 text-indigo-600" />
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+
+        {/* Last Updated info */}
+        {masterStats.lastUpdated && (
+          <div className="flex justify-end">
+            <Badge variant="outline" className="bg-slate-50 text-slate-500">
+              <Clock className="h-3 w-3 mr-1" />
+              Last Updated: {formatDate(masterStats.lastUpdated)}
+            </Badge>
+          </div>
+        )}
 
         {/* Processing Cards */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
@@ -669,14 +769,25 @@ export default function Reports() {
                 />
               </Label>
 
-              <div className="flex items-center justify-between p-4 bg-gradient-to-r from-emerald-50 to-white rounded-xl">
-                <span className="font-semibold text-emerald-800 flex items-center gap-2">
-                  <Users className="h-4 w-4" />
-                  Current Agent Count:
-                </span>
-                <Badge className="bg-emerald-500 text-white px-3 py-1 text-sm">
-                  {masterStats.totalAgents.toLocaleString()}
-                </Badge>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="flex items-center justify-between p-3 bg-gradient-to-r from-blue-50 to-white rounded-xl">
+                  <span className="font-semibold text-blue-800 flex items-center gap-2 text-sm">
+                    <Users className="h-3.5 w-3.5" />
+                    Total:
+                  </span>
+                  <Badge className="bg-blue-500 text-white px-2 py-0.5 text-sm">
+                    {masterStats.totalAgents.toLocaleString()}
+                  </Badge>
+                </div>
+                <div className="flex items-center justify-between p-3 bg-gradient-to-r from-emerald-50 to-white rounded-xl">
+                  <span className="font-semibold text-emerald-800 flex items-center gap-2 text-sm">
+                    <Zap className="h-3.5 w-3.5" />
+                    Active:
+                  </span>
+                  <Badge className="bg-emerald-500 text-white px-2 py-0.5 text-sm">
+                    {masterStats.activeAgents.toLocaleString()}
+                  </Badge>
+                </div>
               </div>
             </CardContent>
             <CardFooter className="bg-slate-50/50 p-6">

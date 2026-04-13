@@ -59,6 +59,7 @@ interface Profile {
   email: string | null;
   introducer_name: string | null;
   leader_name: string | null;
+  status?: string | null;
 }
 
 interface CaseWithDate {
@@ -166,6 +167,7 @@ export default function Leaderboards() {
   const [currentUserCode, setCurrentUserCode] = useState<string>("");
   const [hierarchiesBuilt, setHierarchiesBuilt] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [activeMembersCount, setActiveMembersCount] = useState(0);
 
   const isAdmin = role === "admin" || user?.email === "admin@superachiever.com";
   const API_BASE_URL = "http://127.0.0.1:8000";
@@ -568,6 +570,11 @@ export default function Leaderboards() {
 
       if (profilesError) throw profilesError;
 
+      // Calculate active members count based on status = 'active'
+      const activeCount = profilesData?.filter(p => p.status?.toLowerCase() === 'active').length || 0;
+      setActiveMembersCount(activeCount);
+      console.log("📊 Active Members Count (status='active'):", activeCount);
+
       const profileMap = new Map<string, Profile>();
       profilesData?.forEach((profile: any) => {
         profileMap.set(profile.agent_code, profile);
@@ -894,10 +901,8 @@ export default function Leaderboards() {
             ))}
           </TabsList>
 
-          {/* Rest of your existing TabsContent remains the same */}
           {rankCategories.map((cat) => (
             <TabsContent key={cat.id} value={cat.id} className="mt-6">
-              {/* Your existing content - unchanged */}
               {loadingData ? (
                 <div className="flex flex-col items-center justify-center py-20">
                   <Loader2 className="h-10 w-10 animate-spin text-primary mb-4" />
@@ -928,12 +933,19 @@ export default function Leaderboards() {
                     </Card>
                   )}
 
-                  {/* Total Production Card */}
+                  {/* Total Production Card - Active Members count with subtitle removed */}
                   <Card className="bg-gradient-to-br from-primary/10 to-primary/5 border-primary/20">
                     <CardContent className="p-8">
                       <div className="grid md:grid-cols-2 gap-8">
-                        <div><p className="text-sm font-medium text-primary/80 mb-2">Total Group Production</p><p className="text-4xl font-bold text-primary">{formatAFYC(totalGroupProduction)} AFYC</p><p className="text-sm text-muted-foreground mt-2">Across {totalGroupCases} cases</p></div>
-                        <div><p className="text-sm font-medium text-primary/80 mb-2">Active Members</p><p className="text-4xl font-bold text-primary">{leaderboardData.GAD.length}</p><p className="text-sm text-muted-foreground mt-2">In SuperAchiever Group</p></div>
+                        <div>
+                          <p className="text-sm font-medium text-primary/80 mb-2">Total Group Production</p>
+                          <p className="text-4xl font-bold text-primary">{formatAFYC(totalGroupProduction)} AFYC</p>
+                          <p className="text-sm text-muted-foreground mt-2">Across {totalGroupCases} cases</p>
+                        </div>
+                        <div>
+                          <p className="text-sm font-medium text-primary/80 mb-2">Active Members</p>
+                          <p className="text-4xl font-bold text-primary">{activeMembersCount}</p>
+                        </div>
                       </div>
                     </CardContent>
                   </Card>

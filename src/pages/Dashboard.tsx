@@ -62,6 +62,7 @@ interface Profile {
   full_name: string;
   rank: string;
   join_date: string;
+  status?: string; // Added status field
   cypr?: number;
   attended_vb101?: boolean;
 }
@@ -382,6 +383,29 @@ export default function Dashboard() {
   }
 
   // ============================================
+  // AGENT STATS - Filtered by status
+  // ============================================
+  // Total agents count (all profiles)
+  const totalAgents = profiles.length;
+  
+  // Active agents count (status = 'active')
+  const activeAgents = profiles.filter(p => p.status?.toLowerCase() === 'active').length;
+  
+  // Terminated agents count (status = 'terminated')
+  const terminatedAgents = profiles.filter(p => p.status?.toLowerCase() === 'terminated').length;
+  
+  // Suspended agents count (status = 'suspended')
+  const suspendedAgents = profiles.filter(p => p.status?.toLowerCase() === 'suspended').length;
+
+  console.log('📊 Agent Stats:', {
+    totalAgents,
+    activeAgents,
+    terminatedAgents,
+    suspendedAgents,
+    unknown: profiles.filter(p => !p.status).length,
+  });
+
+  // ============================================
   // MTD CALCULATION - Uses selected month/year for test mode
   // ============================================
   const currentMonthStart = getCurrentMonthStart();
@@ -446,10 +470,6 @@ export default function Dashboard() {
   const totalApproved = cases.filter(c => c.status === "approved").length;
   const totalPending = cases.filter(c => c.status === "pending").length;
   const totalPremium = cases.reduce((s, c) => s + (Number(c.premium) || 0), 0);
-
-  // Agent stats
-  const agentCount = profiles.length;
-  const activeAgents = profiles.filter(p => p.rank && p.rank !== "Inactive").length;
 
   console.log('📊 Dashboard Stats:', {
     totalCases,
@@ -647,7 +667,7 @@ export default function Dashboard() {
           )}
         </div>
 
-        {/* Quick Stats Row for Admin */}
+        {/* Quick Stats Row for Admin - FIXED to show ONLY Active Agents */}
         {isAdmin && (
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
             <Card className="bg-gradient-to-br from-blue-50 to-white">
@@ -655,7 +675,7 @@ export default function Dashboard() {
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="text-sm text-blue-600 font-medium">Total Agents</p>
-                    <p className="text-2xl font-bold text-blue-900">{formatNumber(agentCount)}</p>
+                    <p className="text-2xl font-bold text-blue-900">{formatNumber(totalAgents)}</p>
                   </div>
                   <Users className="h-8 w-8 text-blue-500 opacity-50" />
                 </div>
@@ -672,14 +692,14 @@ export default function Dashboard() {
                 </div>
               </CardContent>
             </Card>
-            <Card className="bg-gradient-to-br from-purple-50 to-white">
+            <Card className="bg-gradient-to-br from-rose-50 to-white">
               <CardContent className="p-4">
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="text-sm text-purple-600 font-medium">Total Cases</p>
-                    <p className="text-2xl font-bold text-purple-900">{formatNumber(totalCases)}</p>
+                    <p className="text-sm text-rose-600 font-medium">Terminated</p>
+                    <p className="text-2xl font-bold text-rose-900">{formatNumber(terminatedAgents)}</p>
                   </div>
-                  <FileText className="h-8 w-8 text-purple-500 opacity-50" />
+                  <AlertCircle className="h-8 w-8 text-rose-500 opacity-50" />
                 </div>
               </CardContent>
             </Card>
@@ -687,10 +707,10 @@ export default function Dashboard() {
               <CardContent className="p-4">
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="text-sm text-amber-600 font-medium">Total AFYC</p>
-                    <p className="text-2xl font-bold text-amber-900">{formatAFYC(totalPremium)}</p>
+                    <p className="text-sm text-amber-600 font-medium">Suspended</p>
+                    <p className="text-2xl font-bold text-amber-900">{formatNumber(suspendedAgents)}</p>
                   </div>
-                  <DollarSign className="h-8 w-8 text-amber-500 opacity-50" />
+                  <Clock className="h-8 w-8 text-amber-500 opacity-50" />
                 </div>
               </CardContent>
             </Card>
