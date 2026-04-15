@@ -7,6 +7,7 @@ import pandas as pd
 import gc
 import time
 import re
+import math
 from typing import Tuple, Optional
 from pathlib import Path
 from dotenv import load_dotenv
@@ -121,6 +122,51 @@ def extract_premium_value(row) -> float:
     
     return 0.0
 
+def normalize_status_for_display(status: str) -> str:
+    """
+    Normalize status for display purposes only (not for storage)
+    This function is for UI display, not for database storage
+    The database stores the original status from Excel
+    """
+    if not status:
+        return 'pending'
+    
+    status_lower = status.lower()
+    
+    # Map to simple categories for UI filtering
+    if 'inforce' in status_lower or 'approved' in status_lower or 'issued' in status_lower:
+        return 'approved'
+    elif 'pending' in status_lower or 'underwriting' in status_lower:
+        return 'pending'
+    elif 'reject' in status_lower or 'decline' in status_lower or 'cancelled' in status_lower:
+        return 'rejected'
+    else:
+        return 'pending'
+
+def clean_value(value):
+    """
+    Clean a value to be JSON serializable for Supabase
+    Converts NaN, NaT, and other invalid values to None
+    """
+    if value is None:
+        return None
+    if isinstance(value, float) and math.isnan(value):
+        return None
+    if isinstance(value, pd._libs.tslibs.nattype.NaTType):
+        return None
+    if isinstance(value, str) and value.lower() in ['nan', 'nat', 'none']:
+        return None
+    return value
+
+def get_date_value(row, column_names):
+    """
+    Try multiple possible column names to get a date value
+    """
+    for col in column_names:
+        if col in row and row[col] is not None and not pd.isna(row[col]):
+            return parse_date(row[col])
+    return None
+
 def sync_to_supabase_chunked(df: pd.DataFrame, chunk_size: int = 100) -> Tuple[int, int]:
     """Sync dataframe to Supabase cases table in chunks to handle large datasets"""
     if not supabase:
@@ -161,20 +207,35 @@ def sync_to_supabase_chunked(df: pd.DataFrame, chunk_size: int = 100) -> Tuple[i
                     continue
                 
                 now = datetime.now().isoformat()
-                submission_date = row.get('PROPOSAL_RECEIVED_DATE')
-                risk_date = row.get('RISK_COMMENCEMENT_DATE')
+                
+                # Try multiple possible column names for submission date
+                submission_date = get_date_value(row, [
+                    'PROPOSAL_RECEIVED_DATE', 
+                    'ENTRY_DATE', 
+                    'SUBMISSION_DATE',
+                    'PROPOSAL RECEIVED DATE'
+                ])
+                
+                # Try multiple possible column names for enforce date
+                enforce_date = get_date_value(row, [
+                    'RISK_COMMENCEMENT_DATE',
+                    'COMMENCEMENT_DATE',
+                    'ENFORCE_DATE',
+                    'EFFECTIVE_DATE'
+                ])
+                
                 premium_value = extract_premium_value(row)
                 
-                # Get status - USE THE STATUS FROM excel_bot
-                status = row.get('PROPOSAL_STATUS', 'pending')
-                if not status:
-                    status = 'pending'
+                # STORE THE ORIGINAL STATUS FROM EXCEL (not simplified)
+                original_status = row.get('PROPOSAL_STATUS', 'pending')
+                if pd.isna(original_status) or original_status == '':
+                    original_status = 'pending'
                 
-                # Get payment frequency
-                payment_frequency = row.get('PAYMENT_FREQUENCY', None)
+                # Get payment frequency - clean NaN values
+                payment_frequency = clean_value(row.get('PAYMENT_FREQUENCY', None))
                 
-                # Get entry month
-                entry_month = row.get('ENTRY_MONTH', None)
+                # Get entry month - clean NaN values
+                entry_month = clean_value(row.get('ENTRY_MONTH', None))
                 
                 # Get credited agent considering transfers
                 credited_agent = agent_code
@@ -190,10 +251,10 @@ def sync_to_supabase_chunked(df: pd.DataFrame, chunk_size: int = 100) -> Tuple[i
                     "credited_agent_id": credited_agent,
                     "original_agent_id": agent_code if credited_agent != agent_code else None,
                     "client_name": str(row.get('AGENT_NAME', 'Unknown')),
-                    "premium": premium_value,
-                    "status": status,
+                    "premium": float(premium_value) if premium_value else 0,
+                    "status": str(original_status),
                     "submission_date_timestamp": submission_date,
-                    "enforce_date": risk_date,
+                    "enforce_date": enforce_date,
                     "product_type": str(row.get('PRODUCT_NAME', 'Standard')),
                     "payment_frequency": payment_frequency,
                     "entry_month": entry_month,
@@ -201,8 +262,8 @@ def sync_to_supabase_chunked(df: pd.DataFrame, chunk_size: int = 100) -> Tuple[i
                     "updated_at": now,
                 }
                 
-                # Remove empty values
-                case_data = {k: v for k, v in case_data.items() if v is not None and v != ''}
+                # Remove None values and clean NaN
+                case_data = {k: clean_value(v) for k, v in case_data.items() if clean_value(v) is not None}
                 
                 supabase.table("cases").upsert(case_data, on_conflict="policy_number").execute()
                 chunk_success += 1
@@ -263,20 +324,35 @@ def sync_to_supabase(df: pd.DataFrame, use_chunking: bool = True, chunk_size: in
                 continue
             
             now = datetime.now().isoformat()
-            submission_date = row.get('PROPOSAL_RECEIVED_DATE')
-            risk_date = row.get('RISK_COMMENCEMENT_DATE')
+            
+            # Try multiple possible column names for submission date
+            submission_date = get_date_value(row, [
+                'PROPOSAL_RECEIVED_DATE', 
+                'ENTRY_DATE', 
+                'SUBMISSION_DATE',
+                'PROPOSAL RECEIVED DATE'
+            ])
+            
+            # Try multiple possible column names for enforce date
+            enforce_date = get_date_value(row, [
+                'RISK_COMMENCEMENT_DATE',
+                'COMMENCEMENT_DATE',
+                'ENFORCE_DATE',
+                'EFFECTIVE_DATE'
+            ])
+            
             premium_value = extract_premium_value(row)
             
-            # Get status - USE THE STATUS FROM excel_bot
-            status = row.get('PROPOSAL_STATUS', 'pending')
-            if not status:
-                status = 'pending'
+            # STORE THE ORIGINAL STATUS FROM EXCEL (not simplified)
+            original_status = row.get('PROPOSAL_STATUS', 'pending')
+            if pd.isna(original_status) or original_status == '':
+                original_status = 'pending'
             
-            # Get payment frequency
-            payment_frequency = row.get('PAYMENT_FREQUENCY', None)
+            # Get payment frequency - clean NaN values
+            payment_frequency = clean_value(row.get('PAYMENT_FREQUENCY', None))
             
-            # Get entry month
-            entry_month = row.get('ENTRY_MONTH', None)
+            # Get entry month - clean NaN values
+            entry_month = clean_value(row.get('ENTRY_MONTH', None))
             
             credited_agent = agent_code
             if transfer_manager:
@@ -291,10 +367,10 @@ def sync_to_supabase(df: pd.DataFrame, use_chunking: bool = True, chunk_size: in
                 "credited_agent_id": credited_agent,
                 "original_agent_id": agent_code if credited_agent != agent_code else None,
                 "client_name": str(row.get('AGENT_NAME', row.get('CLIENT_NAME', 'Unknown'))),
-                "premium": premium_value,
-                "status": status,
+                "premium": float(premium_value) if premium_value else 0,
+                "status": str(original_status),
                 "submission_date_timestamp": submission_date,
-                "enforce_date": risk_date,
+                "enforce_date": enforce_date,
                 "product_type": str(row.get('PRODUCT_NAME', 'Standard')),
                 "payment_frequency": payment_frequency,
                 "entry_month": entry_month,
@@ -302,7 +378,8 @@ def sync_to_supabase(df: pd.DataFrame, use_chunking: bool = True, chunk_size: in
                 "updated_at": now,
             }
             
-            case_data = {k: v for k, v in case_data.items() if v is not None and v != ''}
+            # Remove None values and clean NaN
+            case_data = {k: clean_value(v) for k, v in case_data.items() if clean_value(v) is not None}
             
             supabase.table("cases").upsert(case_data, on_conflict="policy_number").execute()
             success_count += 1
@@ -347,6 +424,7 @@ def sync_to_supabase_optimized(df: pd.DataFrame, batch_size: int = 50) -> Tuple[
     """
     Optimized version using batch operations for maximum performance with transfer handling
     Includes payment_frequency and entry_month support
+    Stores ORIGINAL status from Excel (not simplified)
     """
     if not supabase:
         print("❌ Supabase client not initialized")
@@ -363,9 +441,6 @@ def sync_to_supabase_optimized(df: pd.DataFrame, batch_size: int = 50) -> Tuple[
     print(f"📊 EXCEL FILE STATISTICS:")
     print(f"  Total rows in Excel: {len(df)}")
     print(f"  Unique agent codes in Excel: {len(unique_agent_codes)}")
-    print(f"  Sample of Excel agent codes (first 20):")
-    for i, code in enumerate(sorted(unique_agent_codes)[:20], 1):
-        print(f"    {i:3}. {code}")
     
     # Fetch ALL agent codes from profiles table
     print(f"\n📡 Fetching all agent codes from profiles table...")
@@ -373,9 +448,6 @@ def sync_to_supabase_optimized(df: pd.DataFrame, batch_size: int = 50) -> Tuple[
     existing_agents = {item['agent_code'] for item in result.data}
     
     print(f"  Total agents in profiles: {len(existing_agents)}")
-    print(f"  Sample of profile agent codes (first 20):")
-    for i, code in enumerate(sorted(existing_agents)[:20], 1):
-        print(f"    {i:3}. {code}")
     
     # Find which codes are missing
     missing_codes = []
@@ -391,20 +463,7 @@ def sync_to_supabase_optimized(df: pd.DataFrame, batch_size: int = 50) -> Tuple[
     print(f"  ✅ Matched codes: {len(matched_codes)}")
     print(f"  ❌ Missing codes: {len(missing_codes)}")
     
-    if matched_codes:
-        print(f"\n✅ MATCHED CODES (will be processed):")
-        for i, code in enumerate(sorted(matched_codes)[:20], 1):
-            print(f"    {i:3}. {code}")
-        if len(matched_codes) > 20:
-            print(f"    ... and {len(matched_codes) - 20} more")
-    
     if missing_codes:
-        print(f"\n❌ MISSING CODES (will be skipped):")
-        for i, code in enumerate(sorted(missing_codes)[:20], 1):
-            print(f"    {i:3}. {code}")
-        if len(missing_codes) > 20:
-            print(f"    ... and {len(missing_codes) - 20} more")
-        
         filename = f"missing_agent_codes_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
         with open(filename, 'w') as f:
             f.write(f"Missing Agent Codes Report\n")
@@ -428,6 +487,9 @@ def sync_to_supabase_optimized(df: pd.DataFrame, batch_size: int = 50) -> Tuple[
     payment_frequency_count = 0
     entry_month_count = 0
     
+    # Track unique status values found in Excel
+    unique_statuses = set()
+    
     # Filter dataframe to only include matched agent codes
     matched_df = df[df['AGENT_CODE'].isin(matched_codes)]
     print(f"  Records after filtering by matched codes: {len(matched_df)}")
@@ -442,36 +504,46 @@ def sync_to_supabase_optimized(df: pd.DataFrame, batch_size: int = 50) -> Tuple[
             
             now = datetime.now().isoformat()
             
-            # Use the already parsed dates from excel_bot
-            submission_date = row.get('PROPOSAL_RECEIVED_DATE')
-            risk_date = row.get('RISK_COMMENCEMENT_DATE')
+            # Try multiple possible column names for submission date
+            submission_date = get_date_value(row, [
+                'PROPOSAL_RECEIVED_DATE', 
+                'ENTRY_DATE', 
+                'SUBMISSION_DATE',
+                'PROPOSAL RECEIVED DATE'
+            ])
+            
+            # Try multiple possible column names for enforce date
+            enforce_date = get_date_value(row, [
+                'RISK_COMMENCEMENT_DATE',
+                'COMMENCEMENT_DATE',
+                'ENFORCE_DATE',
+                'EFFECTIVE_DATE'
+            ])
             
             # Extract premium value
             premium_value = extract_premium_value(row)
             
             if premium_value == 0:
                 skipped_zero_premium += 1
-                if idx < 10:
-                    print(f"  ⚠️ Zero premium for {agent_code}")
             
-            # Get status - USE THE STATUS FROM excel_bot (already parsed)
-            status = row.get('PROPOSAL_STATUS', 'pending')
-            if not status:
-                status = 'pending'
+            # STORE THE ORIGINAL STATUS FROM EXCEL (not simplified)
+            original_status = row.get('PROPOSAL_STATUS', 'pending')
+            if pd.isna(original_status) or original_status == '':
+                original_status = 'pending'
             
-            # Get payment frequency from excel_bot
-            payment_frequency = row.get('PAYMENT_FREQUENCY', None)
+            # Track unique statuses for reporting
+            status_str = str(original_status).strip()
+            unique_statuses.add(status_str)
+            
+            # Get payment frequency from excel_bot - clean NaN values
+            payment_frequency = clean_value(row.get('PAYMENT_FREQUENCY', None))
             if payment_frequency and payment_frequency not in ['', 'None', 'nan']:
                 payment_frequency_count += 1
-                if payment_frequency_count <= 10:
-                    print(f"  💳 Payment Frequency: {payment_frequency}")
             
-            # Get entry month from excel_bot
-            entry_month = row.get('ENTRY_MONTH', None)
+            # Get entry month from excel_bot - clean NaN values
+            entry_month = clean_value(row.get('ENTRY_MONTH', None))
             if entry_month and entry_month not in ['', 'None', 'nan']:
                 entry_month_count += 1
-                if entry_month_count <= 10:
-                    print(f"  📅 Entry Month: {entry_month}")
             
             # Get credited agent considering transfers
             credited_agent = agent_code
@@ -483,8 +555,6 @@ def sync_to_supabase_optimized(df: pd.DataFrame, batch_size: int = 50) -> Tuple[
             
             if credited_agent != agent_code:
                 transfer_count += 1
-                if transfer_count <= 10:
-                    print(f"  🔄 Transfer: {agent_code} → {credited_agent}")
             
             # Prepare case data with ALL fields
             case_data = {
@@ -493,10 +563,10 @@ def sync_to_supabase_optimized(df: pd.DataFrame, batch_size: int = 50) -> Tuple[
                 "credited_agent_id": credited_agent,
                 "original_agent_id": agent_code if credited_agent != agent_code else None,
                 "client_name": str(row.get('AGENT_NAME', row.get('CLIENT_NAME', 'Unknown'))),
-                "premium": premium_value,
-                "status": status,
+                "premium": float(premium_value) if premium_value else 0,
+                "status": str(original_status),
                 "submission_date_timestamp": submission_date,
-                "enforce_date": risk_date,
+                "enforce_date": enforce_date,
                 "product_type": str(row.get('PRODUCT_NAME', 'Standard')),
                 "payment_frequency": payment_frequency,
                 "entry_month": entry_month,
@@ -504,10 +574,14 @@ def sync_to_supabase_optimized(df: pd.DataFrame, batch_size: int = 50) -> Tuple[
                 "updated_at": now,
             }
             
-            # Remove None values
-            case_data = {k: v for k, v in case_data.items() if v is not None and v != ''}
+            # Clean all values (convert NaN to None) and remove None values
+            case_data_cleaned = {}
+            for k, v in case_data.items():
+                cleaned_v = clean_value(v)
+                if cleaned_v is not None:
+                    case_data_cleaned[k] = cleaned_v
             
-            current_batch.append(case_data)
+            current_batch.append(case_data_cleaned)
             
             # When batch is full, add to batches list
             if len(current_batch) >= batch_size:
@@ -529,6 +603,9 @@ def sync_to_supabase_optimized(df: pd.DataFrame, batch_size: int = 50) -> Tuple[
     print(f"  Cases transferred: {transfer_count}")
     print(f"  Records with Payment Frequency: {payment_frequency_count}")
     print(f"  Records with Entry Month: {entry_month_count}")
+    print(f"\n📝 UNIQUE STATUS VALUES FOUND IN EXCEL:")
+    for status in sorted(unique_statuses):
+        print(f"    - {status}")
     
     # Execute all batches
     print(f"\n📦 Executing {len(batches)} batches...")
@@ -536,16 +613,17 @@ def sync_to_supabase_optimized(df: pd.DataFrame, batch_size: int = 50) -> Tuple[
         try:
             # Debug: Print first record in batch
             if i == 0 and batch:
-                print(f"\n  Sample record from batch 1:")
+                print(f"\n  Sample record from batch {i+1}:")
                 print(f"    Policy: {batch[0].get('policy_number', 'N/A')}")
                 print(f"    Agent: {batch[0].get('agent_id', 'N/A')}")
                 if batch[0].get('credited_agent_id') and batch[0].get('credited_agent_id') != batch[0].get('agent_id'):
                     print(f"    Credited to: {batch[0].get('credited_agent_id')}")
                 print(f"    Premium: {batch[0].get('premium', 'N/A')}")
-                print(f"    Status: {batch[0].get('status', 'N/A')}")
+                print(f"    Status (Original): {batch[0].get('status', 'N/A')}")
                 print(f"    Payment Frequency: {batch[0].get('payment_frequency', 'N/A')}")
                 print(f"    Entry Month: {batch[0].get('entry_month', 'N/A')}")
                 print(f"    Submission Date: {batch[0].get('submission_date_timestamp', 'N/A')}")
+                print(f"    Enforce Date: {batch[0].get('enforce_date', 'N/A')}")
             
             supabase.table("cases").upsert(batch, on_conflict="policy_number").execute()
             success_count += len(batch)
@@ -577,27 +655,28 @@ def check_premium_values(limit: int = 20):
     """Check premium values in the database for debugging"""
     try:
         result = supabase.table("cases") \
-            .select("policy_number, agent_id, credited_agent_id, premium, payment_frequency, entry_month, submission_date_timestamp, enforce_date, created_at") \
+            .select("policy_number, agent_id, credited_agent_id, premium, status, payment_frequency, entry_month, submission_date_timestamp, enforce_date, created_at") \
             .order("created_at", desc=True) \
             .limit(limit) \
             .execute()
         
         print("\n📊 Current values in database (most recent):")
-        print("-" * 120)
+        print("-" * 140)
         for item in result.data:
             sub_date = item.get('submission_date_timestamp', 'N/A')
             if sub_date and sub_date != 'N/A':
                 sub_date = sub_date[:10]
             
+            status = item.get('status', 'N/A')
             payment_freq = item.get('payment_frequency', 'N/A')
             entry_month = item.get('entry_month', 'N/A')
             
             credited = item.get('credited_agent_id', '')
             if credited and credited != item.get('agent_id'):
-                print(f"  Policy: {item['policy_number'][:15]:<15} Agent: {item['agent_id']:<10} → {credited:<10} Premium: {item['premium']:>10.2f}  Freq: {payment_freq:<10} Month: {entry_month:<10} Sub: {sub_date}")
+                print(f"  Policy: {item['policy_number'][:15]:<15} Agent: {item['agent_id']:<10} → {credited:<10} Premium: {item['premium']:>10.2f} Status: {status[:20]:<20} Freq: {payment_freq:<10} Month: {entry_month:<10} Sub: {sub_date}")
             else:
-                print(f"  Policy: {item['policy_number'][:15]:<15} Agent: {item['agent_id']:<10} Premium: {item['premium']:>10.2f}  Freq: {payment_freq:<10} Month: {entry_month:<10} Sub: {sub_date}")
-        print("-" * 120)
+                print(f"  Policy: {item['policy_number'][:15]:<15} Agent: {item['agent_id']:<10} Premium: {item['premium']:>10.2f} Status: {status[:20]:<20} Freq: {payment_freq:<10} Month: {entry_month:<10} Sub: {sub_date}")
+        print("-" * 140)
         
         return result.data
     except Exception as e:
@@ -630,6 +709,13 @@ def get_stats():
         # Get entry month stats
         month_result = supabase.table("cases").select("entry_month", count="exact").not_.is_("entry_month", "null").execute()
         
+        # Get unique status values
+        status_result = supabase.table("cases").select("status").execute()
+        unique_statuses = set()
+        for item in status_result.data:
+            if item.get('status'):
+                unique_statuses.add(item.get('status'))
+        
         # Get transfer stats
         transfer_count = 0
         if transfer_manager:
@@ -653,6 +739,7 @@ def get_stats():
             "transferredCases": transfer_count,
             "recordsWithPaymentFrequency": freq_result.count if hasattr(freq_result, 'count') else 0,
             "recordsWithEntryMonth": month_result.count if hasattr(month_result, 'count') else 0,
+            "uniqueStatusValues": list(unique_statuses),
             "lastUpdated": last_updated
         }
     except Exception as e:
@@ -663,5 +750,6 @@ def get_stats():
             "transferredCases": 0,
             "recordsWithPaymentFrequency": 0,
             "recordsWithEntryMonth": 0,
+            "uniqueStatusValues": [],
             "lastUpdated": None
         }

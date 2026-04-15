@@ -3,7 +3,6 @@ import { Navigate, useNavigate } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 import DashboardLayout from "@/components/layout/DashboardLayout";
 import { StatCard } from "@/components/ui/stat-card";
-import { StatusBadge } from "@/components/ui/status-badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -26,13 +25,14 @@ import {
   Calendar,
   ChevronLeft,
   ChevronRight,
+  AlertTriangle,
+  AlertOctagon,
 } from "lucide-react";
-import { format, parseISO, isValid, startOfMonth, endOfMonth, startOfYear, endOfYear } from "date-fns";
+import { format, parseISO, isValid, startOfMonth, endOfMonth, startOfYear, endOfYear, differenceInDays } from "date-fns";
 import { SuperAchieverHeader } from "@/components/dashboard/SuperAchieverHeader";
 import { StatCardDetail } from "@/components/dashboard/StatCardDetail";
 import { LiveRankings } from "@/components/dashboard/LiveRankings";
 
-// Add Select component if not available, or import from shadcn
 import {
   Select,
   SelectContent,
@@ -47,7 +47,7 @@ interface CaseData {
   client_name: string;
   product_type: string | null;
   premium: number | null;
-  status: "approved" | "pending" | "error";
+  status: string;
   remark: string | null;
   submission_date_timestamp: string;
   enforce_date: string | null;
@@ -62,7 +62,7 @@ interface Profile {
   full_name: string;
   rank: string;
   join_date: string;
-  status?: string; // Added status field
+  status?: string;
   cypr?: number;
   attended_vb101?: boolean;
 }
@@ -74,6 +74,7 @@ interface Alert {
   agent_id: string;
   status: string;
   remark: string | null;
+  submission_date_timestamp: string;
   created_at: string;
 }
 
@@ -95,6 +96,26 @@ interface StatDetail {
   details: { label: string; value: string | number }[];
 }
 
+// Helper function to check if a status is pending
+const isPendingStatus = (status: string): boolean => {
+  if (!status) return false;
+  const statusLower = status.toLowerCase();
+  return statusLower.includes('pending') || 
+         statusLower.includes('underwriting') || 
+         statusLower.includes('counter') || 
+         statusLower.includes('payment') ||
+         statusLower === 'entered';
+};
+
+// Helper function to check if status is approved/inforce
+const isApprovedStatus = (status: string): boolean => {
+  if (!status) return false;
+  const statusLower = status.toLowerCase();
+  return statusLower.includes('inforce') || 
+         statusLower.includes('approved') || 
+         statusLower.includes('issued');
+};
+
 // Helper functions
 const formatAFYC = (value: number | null): string => {
   if (!value || value === 0) return "0 AFYC";
@@ -108,7 +129,7 @@ const formatNumber = (value: number): string => {
   return value.toLocaleString('en-MY');
 };
 
-// Month options for testing
+// Month options
 const monthOptions = [
   { value: 0, label: "January" },
   { value: 1, label: "February" },
@@ -136,20 +157,18 @@ export default function Dashboard() {
   const [selectedStat, setSelectedStat] = useState<StatDetail | null>(null);
   const [apiConnected, setApiConnected] = useState(false);
   
-  // Test mode: Allow selecting a specific month for MTD
-  const [testMode, setTestMode] = useState(false);
+  // Filter mode
+  const [filterMode, setFilterMode] = useState(false);
   const [selectedMonth, setSelectedMonth] = useState<number>(new Date().getMonth());
   const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear());
   
-  // Current user's agent code for "Jump to Me" functionality
   const [currentUserCode, setCurrentUserCode] = useState<string>("");
 
   const isAdmin = role === "admin" || user?.email === "admin@superachiever.com";
   const API_BASE_URL = "http://127.0.0.1:8000";
 
-  // Get current date for filtering (or use selected month/year for test mode)
   const getCurrentDate = () => {
-    if (testMode) {
+    if (filterMode) {
       return new Date(selectedYear, selectedMonth, 1);
     }
     return new Date();
@@ -159,13 +178,11 @@ export default function Dashboard() {
   const currentYear = currentDate.getFullYear();
   const currentMonth = currentDate.getMonth();
 
-  // Helper to get the start of current month as DATE string
   const getCurrentMonthStart = (): string => {
     const start = startOfMonth(currentDate);
     return format(start, 'yyyy-MM-dd');
   };
 
-  // Helper to get the start of current year as DATE string
   const getCurrentYearStart = (): string => {
     const start = startOfYear(currentDate);
     return format(start, 'yyyy-MM-dd');
@@ -326,8 +343,7 @@ export default function Dashboard() {
       if (isAdmin) {
         setCases(allCases);
         const pendingAlerts = allCases
-          .filter(c => c.status === "pending")
-          .slice(0, 3) // Reduced from 5 to 3 alerts
+          .filter(c => isPendingStatus(c.status))
           .map(c => ({
             id: c.id,
             policy_number: c.policy_number,
@@ -335,6 +351,7 @@ export default function Dashboard() {
             agent_id: c.agent_id,
             status: c.status,
             remark: c.remark,
+            submission_date_timestamp: c.submission_date_timestamp,
             created_at: c.created_at,
           }));
         setAlerts(pendingAlerts);
@@ -349,8 +366,7 @@ export default function Dashboard() {
           const userCases = allCases.filter(c => c.agent_id === profile.agent_code);
           setCases(userCases);
           const userAlerts = userCases
-            .filter(c => c.status === "pending")
-            .slice(0, 3) // Reduced from 5 to 3 alerts
+            .filter(c => isPendingStatus(c.status))
             .map(c => ({
               id: c.id,
               policy_number: c.policy_number,
@@ -358,6 +374,7 @@ export default function Dashboard() {
               agent_id: c.agent_id,
               status: c.status,
               remark: c.remark,
+              submission_date_timestamp: c.submission_date_timestamp,
               created_at: c.created_at,
             }));
           setAlerts(userAlerts);
@@ -382,40 +399,19 @@ export default function Dashboard() {
     return <Navigate to="/auth" replace />;
   }
 
-  // ============================================
-  // AGENT STATS - Filtered by status
-  // ============================================
-  // Total agents count (all profiles)
+  // Agent Stats
   const totalAgents = profiles.length;
-  
-  // Active agents count (status = 'active')
   const activeAgents = profiles.filter(p => p.status?.toLowerCase() === 'active').length;
-  
-  // Terminated agents count (status = 'terminated')
   const terminatedAgents = profiles.filter(p => p.status?.toLowerCase() === 'terminated').length;
-  
-  // Suspended agents count (status = 'suspended')
   const suspendedAgents = profiles.filter(p => p.status?.toLowerCase() === 'suspended').length;
 
-  console.log('📊 Agent Stats:', {
-    totalAgents,
-    activeAgents,
-    terminatedAgents,
-    suspendedAgents,
-    unknown: profiles.filter(p => !p.status).length,
-  });
-
-  // ============================================
-  // MTD CALCULATION - Uses selected month/year for test mode
-  // ============================================
+  // MTD Calculation
   const currentMonthStart = getCurrentMonthStart();
   
   const mtdCases = cases.filter((c) => {
-    // First try to use entry_month if available
     if (c.entry_month) {
       return c.entry_month === currentMonthStart;
     }
-    // Fallback: use submission_date_timestamp
     if (c.submission_date_timestamp) {
       try {
         const date = parseISO(c.submission_date_timestamp);
@@ -429,23 +425,19 @@ export default function Dashboard() {
     return false;
   });
   
-  const mtdApproved = mtdCases.filter((c) => c.status === "approved").length;
-  const mtdPending = mtdCases.filter((c) => c.status === "pending").length;
+  const mtdApproved = mtdCases.filter((c) => isApprovedStatus(c.status)).length;
+  const mtdPending = mtdCases.filter((c) => isPendingStatus(c.status)).length;
   const mtdPremium = mtdCases.reduce((s, c) => s + (Number(c.premium) || 0), 0);
-  const mtdApprovedPremium = mtdCases.filter(c => c.status === "approved").reduce((s, c) => s + (Number(c.premium) || 0), 0);
-  const mtdPendingPremium = mtdCases.filter(c => c.status === "pending").reduce((s, c) => s + (Number(c.premium) || 0), 0);
+  const mtdApprovedPremium = mtdCases.filter(c => isApprovedStatus(c.status)).reduce((s, c) => s + (Number(c.premium) || 0), 0);
+  const mtdPendingPremium = mtdCases.filter(c => isPendingStatus(c.status)).reduce((s, c) => s + (Number(c.premium) || 0), 0);
 
-  // ============================================
-  // YTD CALCULATION - Uses current year (real or test)
-  // ============================================
+  // YTD Calculation
   const currentYearStart = getCurrentYearStart();
   
   const ytdCases = cases.filter((c) => {
-    // First try to use entry_month
     if (c.entry_month) {
       return c.entry_month >= currentYearStart;
     }
-    // Fallback: use submission_date_timestamp
     if (c.submission_date_timestamp) {
       try {
         const date = parseISO(c.submission_date_timestamp);
@@ -459,36 +451,23 @@ export default function Dashboard() {
     return false;
   });
   
-  const ytdApproved = ytdCases.filter((c) => c.status === "approved").length;
-  const ytdPending = ytdCases.filter((c) => c.status === "pending").length;
+  const ytdApproved = ytdCases.filter((c) => isApprovedStatus(c.status)).length;
+  const ytdPending = ytdCases.filter((c) => isPendingStatus(c.status)).length;
   const ytdPremium = ytdCases.reduce((s, c) => s + (Number(c.premium) || 0), 0);
-  const ytdApprovedPremium = ytdCases.filter(c => c.status === "approved").reduce((s, c) => s + (Number(c.premium) || 0), 0);
-  const ytdPendingPremium = ytdCases.filter(c => c.status === "pending").reduce((s, c) => s + (Number(c.premium) || 0), 0);
+  const ytdApprovedPremium = ytdCases.filter(c => isApprovedStatus(c.status)).reduce((s, c) => s + (Number(c.premium) || 0), 0);
+  const ytdPendingPremium = ytdCases.filter(c => isPendingStatus(c.status)).reduce((s, c) => s + (Number(c.premium) || 0), 0);
 
-  // Lifetime stats (all time)
+  // Lifetime stats
   const totalCases = cases.length;
-  const totalApproved = cases.filter(c => c.status === "approved").length;
-  const totalPending = cases.filter(c => c.status === "pending").length;
+  const totalApproved = cases.filter(c => isApprovedStatus(c.status)).length;
+  const totalPending = cases.filter(c => isPendingStatus(c.status)).length;
   const totalPremium = cases.reduce((s, c) => s + (Number(c.premium) || 0), 0);
-
-  console.log('📊 Dashboard Stats:', {
-    totalCases,
-    mtdCases: mtdCases.length,
-    ytdCases: ytdCases.length,
-    currentMonth: monthOptions[currentMonth]?.label,
-    currentYear,
-    testMode,
-    selectedMonth: monthOptions[selectedMonth]?.label,
-    selectedYear,
-    entryMonthNullCount: cases.filter(c => !c.entry_month).length,
-    currentUserCode,
-  });
 
   const mtdStats = [
     {
       title: "MTD Cases",
       value: formatNumber(mtdCases.length),
-      subtitle: testMode ? `${monthOptions[currentMonth]?.label} ${currentYear} (Test Mode)` : `${format(currentDate, "MMMM yyyy")}`,
+      subtitle: filterMode ? `${monthOptions[currentMonth]?.label} ${currentYear} (Filtered)` : format(currentDate, "MMMM yyyy"),
       icon: <FileText className="h-6 w-6" />,
       variant: "default" as const,
       details: [
@@ -502,7 +481,7 @@ export default function Dashboard() {
     {
       title: "MTD Approved",
       value: formatAFYC(mtdApprovedPremium),
-      subtitle: testMode ? `${monthOptions[currentMonth]?.label} ${currentYear} (Test Mode)` : `${format(currentDate, "MMMM yyyy")}`,
+      subtitle: filterMode ? `${monthOptions[currentMonth]?.label} ${currentYear} (Filtered)` : format(currentDate, "MMMM yyyy"),
       icon: <CheckCircle2 className="h-6 w-6" />,
       variant: "success" as const,
       details: [
@@ -515,7 +494,7 @@ export default function Dashboard() {
     {
       title: "MTD Pending",
       value: formatAFYC(mtdPendingPremium),
-      subtitle: testMode ? `${monthOptions[currentMonth]?.label} ${currentYear} (Test Mode)` : `${format(currentDate, "MMMM yyyy")}`,
+      subtitle: filterMode ? `${monthOptions[currentMonth]?.label} ${currentYear} (Filtered)` : format(currentDate, "MMMM yyyy"),
       icon: <Clock className="h-6 w-6" />,
       variant: "warning" as const,
       details: [
@@ -528,7 +507,7 @@ export default function Dashboard() {
     {
       title: "MTD Total AFYC",
       value: formatAFYC(mtdPremium),
-      subtitle: testMode ? `${monthOptions[currentMonth]?.label} ${currentYear} (Test Mode)` : `${format(currentDate, "MMMM yyyy")}`,
+      subtitle: filterMode ? `${monthOptions[currentMonth]?.label} ${currentYear} (Filtered)` : format(currentDate, "MMMM yyyy"),
       icon: <DollarSign className="h-6 w-6" />,
       variant: "primary" as const,
       details: [
@@ -544,7 +523,7 @@ export default function Dashboard() {
     {
       title: "YTD Cases",
       value: formatNumber(ytdCases.length),
-      subtitle: testMode ? `${currentYear} Year-to-Date (Test Mode)` : `${currentYear} Year-to-Date`,
+      subtitle: filterMode ? `${currentYear} Year-to-Date (Filtered)` : `${currentYear} Year-to-Date`,
       icon: <BarChart3 className="h-6 w-6" />,
       variant: "default" as const,
       details: [
@@ -558,7 +537,7 @@ export default function Dashboard() {
     {
       title: "YTD Approved",
       value: formatAFYC(ytdApprovedPremium),
-      subtitle: testMode ? `${currentYear} Year-to-Date (Test Mode)` : `${currentYear} Year-to-Date`,
+      subtitle: filterMode ? `${currentYear} Year-to-Date (Filtered)` : `${currentYear} Year-to-Date`,
       icon: <CheckCircle2 className="h-6 w-6" />,
       variant: "success" as const,
       details: [
@@ -571,7 +550,7 @@ export default function Dashboard() {
     {
       title: "YTD Pending",
       value: formatAFYC(ytdPendingPremium),
-      subtitle: testMode ? `${currentYear} Year-to-Date (Test Mode)` : `${currentYear} Year-to-Date`,
+      subtitle: filterMode ? `${currentYear} Year-to-Date (Filtered)` : `${currentYear} Year-to-Date`,
       icon: <Clock className="h-6 w-6" />,
       variant: "warning" as const,
       details: [
@@ -584,7 +563,7 @@ export default function Dashboard() {
     {
       title: "YTD Total AFYC",
       value: formatAFYC(ytdPremium),
-      subtitle: testMode ? `${currentYear} Year-to-Date (Test Mode)` : `${currentYear} Year-to-Date`,
+      subtitle: filterMode ? `${currentYear} Year-to-Date (Filtered)` : `${currentYear} Year-to-Date`,
       icon: <TrendingUp className="h-6 w-6" />,
       variant: "primary" as const,
       details: [
@@ -597,29 +576,96 @@ export default function Dashboard() {
     },
   ];
 
+  // Custom Alert Component with color coding based on days pending
+  const AlertItem = ({ alert }: { alert: Alert }) => {
+    const submissionDate = alert.submission_date_timestamp ? parseISO(alert.submission_date_timestamp) : null;
+    const daysPending = submissionDate ? differenceInDays(new Date(), submissionDate) : 0;
+    const isUrgent = daysPending > 7;
+    const isWarning = daysPending >= 3 && daysPending <= 7;
+    
+    const getAlertStyles = () => {
+      if (isUrgent) {
+        return {
+          border: "border-red-300",
+          bg: "bg-red-50/50",
+          hover: "hover:border-red-400",
+          badge: "bg-red-100 text-red-700 border-red-200",
+          icon: <AlertOctagon className="h-4 w-4 text-red-500" />
+        };
+      } else if (isWarning) {
+        return {
+          border: "border-amber-300",
+          bg: "bg-amber-50/50",
+          hover: "hover:border-amber-400",
+          badge: "bg-amber-100 text-amber-700 border-amber-200",
+          icon: <AlertTriangle className="h-4 w-4 text-amber-500" />
+        };
+      } else {
+        return {
+          border: "border-warning/30",
+          bg: "bg-warning/5",
+          hover: "hover:border-warning/50",
+          badge: "bg-amber-100 text-amber-700 border-amber-200",
+          icon: <Clock className="h-4 w-4 text-amber-500" />
+        };
+      }
+    };
+    
+    const styles = getAlertStyles();
+    
+    return (
+      <div
+        className={`cursor-pointer rounded-lg border ${styles.border} ${styles.bg} p-2.5 transition-all duration-300 hover:shadow-sm ${styles.hover}`}
+        onClick={() => navigate("/dashboard/alerts")}
+      >
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            {styles.icon}
+            <Badge className={styles.badge}>
+              {daysPending} days pending
+            </Badge>
+          </div>
+          {isUrgent && (
+            <Badge className="bg-red-500 text-white text-[8px] font-black uppercase px-1.5 py-0.5">
+              URGENT
+            </Badge>
+          )}
+        </div>
+        <p className="mt-1.5 text-sm font-medium">{alert.policy_number}</p>
+        <p className="text-xs text-muted-foreground">{alert.client_name}</p>
+        <p className="text-xs text-muted-foreground mt-0.5">Agent: {alert.agent_id}</p>
+        {alert.remark && (
+          <p className="mt-1 text-xs text-warning flex items-center gap-1">
+            <AlertCircle className="h-3 w-3" />
+            {alert.remark}
+          </p>
+        )}
+      </div>
+    );
+  };
+
   return (
     <DashboardLayout>
       <div className="space-y-6">
-        {/* SUPERACHIEVER Header */}
         <SuperAchieverHeader lastUploadDate={lastUploadDate} />
 
-        {/* Test Mode Toggle and Month Selector */}
+        {/* Filter Toggle and Month Selector - Renamed */}
         <div className="flex items-center justify-between gap-4 p-4 bg-slate-50 rounded-lg border border-slate-200">
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-2">
               <input
                 type="checkbox"
-                id="testMode"
-                checked={testMode}
-                onChange={(e) => setTestMode(e.target.checked)}
+                id="filterMode"
+                checked={filterMode}
+                onChange={(e) => setFilterMode(e.target.checked)}
                 className="w-4 h-4 text-primary rounded border-slate-300"
               />
-              <label htmlFor="testMode" className="text-sm font-medium text-slate-700">
-                Test Mode (Select Month/Year)
+              <label htmlFor="filterMode" className="text-sm font-medium text-slate-700">
+                Filter (Select Month / Year)
               </label>
             </div>
             
-            {testMode && (
+            {filterMode && (
               <div className="flex items-center gap-3 ml-4">
                 <Select
                   value={selectedMonth.toString()}
@@ -660,14 +706,14 @@ export default function Dashboard() {
             )}
           </div>
           
-          {testMode && (
-            <Badge variant="outline" className="bg-yellow-50 text-yellow-700 border-yellow-300">
-              Testing: {monthOptions[selectedMonth]?.label} {selectedYear}
+          {filterMode && (
+            <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-300">
+              Filtering: {monthOptions[selectedMonth]?.label} {selectedYear}
             </Badge>
           )}
         </div>
 
-        {/* Quick Stats Row for Admin - FIXED to show ONLY Active Agents */}
+        {/* Quick Stats Row for Admin */}
         {isAdmin && (
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
             <Card className="bg-gradient-to-br from-blue-50 to-white">
@@ -717,7 +763,7 @@ export default function Dashboard() {
           </div>
         )}
 
-        {/* MTD Stats - Resets every month */}
+        {/* MTD Stats */}
         <div>
           <div className="flex items-center gap-2 mb-3">
             <Calendar className="h-4 w-4 text-primary" />
@@ -755,7 +801,7 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* YTD Stats - Accumulates throughout the year */}
+        {/* YTD Stats */}
         <div>
           <div className="flex items-center gap-2 mb-3">
             <TrendingUp className="h-4 w-4 text-primary" />
@@ -793,23 +839,21 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* Live Rankings + Alerts & Contests - Reduced Height Cards */}
+        {/* Live Rankings + Alerts & Contests */}
         <div className="grid gap-6 lg:grid-cols-3">
-          {/* Live Rankings - Takes up 2 columns */}
           <div className="lg:col-span-2">
             <LiveRankings 
               cases={cases} 
               profiles={profiles} 
-              testMode={testMode} 
+              filterMode={filterMode} 
               selectedMonth={selectedMonth} 
               selectedYear={selectedYear}
               currentUserCode={currentUserCode}
             />
           </div>
 
-          {/* Right Column - Normal column without flex stretching */}
           <div className="space-y-6">
-            {/* Alerts Card - Natural height (not stretched) */}
+            {/* Alerts Card with Color Coding */}
             <Card className="shadow-soft">
               <CardHeader className="flex flex-row items-center gap-2 pb-3">
                 <Bell className="h-5 w-5 text-warning" />
@@ -829,23 +873,8 @@ export default function Dashboard() {
                   </div>
                 ) : (
                   <div className="space-y-2">
-                    {alerts.map((alert) => (
-                      <div
-                        key={alert.id}
-                        className="cursor-pointer rounded-lg border border-warning/30 bg-warning/5 p-2.5 transition-all duration-300 hover:shadow-sm"
-                        onClick={() => navigate("/dashboard/alerts")}
-                      >
-                        <StatusBadge variant="pending">Pending</StatusBadge>
-                        <p className="mt-1.5 text-sm font-medium">{alert.policy_number}</p>
-                        <p className="text-xs text-muted-foreground">{alert.client_name}</p>
-                        <p className="text-xs text-muted-foreground mt-0.5">Agent: {alert.agent_id}</p>
-                        {alert.remark && (
-                          <p className="mt-1 text-xs text-warning flex items-center gap-1">
-                            <AlertCircle className="h-3 w-3" />
-                            {alert.remark}
-                          </p>
-                        )}
-                      </div>
+                    {alerts.slice(0, 3).map((alert) => (
+                      <AlertItem key={alert.id} alert={alert} />
                     ))}
                     {alerts.length > 0 && (
                       <Button
@@ -862,7 +891,7 @@ export default function Dashboard() {
               </CardContent>
             </Card>
 
-            {/* Active Contests Card - Natural height (not stretched) */}
+            {/* Active Contests Card */}
             <Card className="shadow-soft">
               <CardHeader className="flex flex-row items-center gap-2 pb-3">
                 <Trophy className="h-5 w-5 text-warning" />

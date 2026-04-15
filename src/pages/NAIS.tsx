@@ -227,7 +227,7 @@ export default function NAIS() {
                     <TableHead className="w-24 text-center font-bold text-slate-900">RANK</TableHead>
                     <TableHead className="font-bold text-slate-900">AGENT DETAILS</TableHead>
                     <TableHead className="font-bold text-slate-900">DESIGNATION</TableHead>
-                    <TableHead className="text-right font-bold pr-8 text-slate-900">TOTAL AFYC (RM)</TableHead>
+                    <TableHead className="text-right font-bold pr-8 text-slate-900">TOTAL AFYC</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>

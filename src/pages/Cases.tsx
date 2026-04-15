@@ -13,7 +13,6 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { StatusBadge } from "@/components/ui/status-badge";
 import { supabase } from "@/integrations/supabase/client";
 import { 
   Search, 
@@ -86,6 +85,17 @@ interface Filters {
   paymentFrequency: string;
 }
 
+// Helper function to check if a status is pending
+const isPendingStatus = (status: string): boolean => {
+  if (!status) return false;
+  const statusLower = status.toLowerCase();
+  return statusLower.includes('pending') || 
+         statusLower.includes('underwriting') || 
+         statusLower.includes('counter') || 
+         statusLower.includes('payment') ||
+         statusLower === 'entered';
+};
+
 // Helper function to safely parse dates
 const parseDate = (dateString: string | null): Date | null => {
   if (!dateString) return null;
@@ -126,6 +136,49 @@ const formatAFYC = (value: number | null): string => {
   })}`;
 };
 
+// Get status badge variant based on actual status text
+const getStatusVariant = (status: string): "approved" | "pending" | "rejected" => {
+  const statusLower = status.toLowerCase();
+  
+  // Check for approved/inforce statuses (Green)
+  if (statusLower.includes('inforce') || 
+      statusLower.includes('approved') || 
+      statusLower.includes('issued') ||
+      statusLower === 'inforce') {
+    return "approved";
+  }
+  
+  // Check for rejected/declined/cancelled statuses (Red)
+  if (statusLower.includes('reject') || 
+      statusLower.includes('decline') || 
+      statusLower.includes('cancelled') ||
+      statusLower.includes('cancel')) {
+    return "rejected";
+  }
+  
+  // Everything else is pending (Yellow)
+  return "pending";
+};
+
+// Get human-readable status label
+const getStatusLabel = (status: string): string => {
+  const statusLower = status.toLowerCase();
+  
+  if (statusLower.includes('inforce')) return "Inforce";
+  if (statusLower.includes('approved')) return "Approved";
+  if (statusLower.includes('issued')) return "Issued";
+  if (statusLower.includes('pending for underwriting')) return "Pending Underwriting";
+  if (statusLower.includes('pending for payment')) return "Pending Payment";
+  if (statusLower.includes('pending for counter offer')) return "Pending Counter Offer";
+  if (statusLower.includes('reject')) return "Rejected";
+  if (statusLower.includes('decline')) return "Declined";
+  if (statusLower.includes('cancelled')) return "Cancelled";
+  if (statusLower.includes('entered')) return "Entered";
+  
+  // Return original status with first letter capitalized
+  return status.charAt(0).toUpperCase() + status.slice(1);
+};
+
 // Date format for inputs
 const formatDateInput = (date: Date | null): string => {
   if (!date) return "";
@@ -147,6 +200,9 @@ const parseDateInput = (dateString: string): Date | null => {
 
 // Payment frequency options for filtering
 const paymentFrequencyOptions = ["all", "Monthly", "Yearly", "Quarterly"];
+
+// Status options based on actual statuses in database
+const statusOptions = ["all", "inforce", "pending", "approved", "rejected", "declined", "cancelled"];
 
 export default function Cases() {
   const { user, role, isLoading } = useAuth();
@@ -177,7 +233,6 @@ export default function Cases() {
 
   const PAGE_SIZE = 50;
   const isAdmin = role === "admin" || user?.email === "admin@superachiever.com";
-  const statusOptions = ["all", "approved", "pending", "rejected"];
 
   useEffect(() => {
     if (user) {
@@ -322,7 +377,25 @@ export default function Cases() {
     }
 
     if (filters.status !== "all") {
-      filtered = filtered.filter((c) => c.status === filters.status);
+      filtered = filtered.filter((c) => {
+        const statusLower = c.status.toLowerCase();
+        const filterLower = filters.status.toLowerCase();
+        
+        if (filterLower === 'inforce') {
+          return statusLower.includes('inforce');
+        } else if (filterLower === 'approved') {
+          return statusLower.includes('approved') || statusLower.includes('issued');
+        } else if (filterLower === 'pending') {
+          return statusLower.includes('pending') || statusLower.includes('underwriting') || statusLower.includes('counter') || statusLower.includes('payment') || statusLower === 'entered';
+        } else if (filterLower === 'rejected') {
+          return statusLower.includes('reject') || statusLower.includes('decline');
+        } else if (filterLower === 'declined') {
+          return statusLower.includes('decline');
+        } else if (filterLower === 'cancelled') {
+          return statusLower.includes('cancel');
+        }
+        return c.status.toLowerCase() === filterLower;
+      });
     }
 
     if (filters.paymentFrequency !== "all") {
@@ -478,8 +551,9 @@ export default function Cases() {
         ["Report Summary"],
         [`Total Cases: ${filteredCases.length}`],
         [`Total AFYC: ${calculateTotalPremium().toLocaleString()}`],
-        [`Approved Cases: ${filteredCases.filter(c => c.status === "approved").length}`],
-        [`Pending Cases: ${filteredCases.filter(c => c.status === "pending").length}`],
+        [`Approved Cases: ${filteredCases.filter(c => getStatusVariant(c.status) === "approved").length}`],
+        [`Pending Cases: ${filteredCases.filter(c => getStatusVariant(c.status) === "pending").length}`],
+        [`Rejected Cases: ${filteredCases.filter(c => getStatusVariant(c.status) === "rejected").length}`],
         [""],
         ["Prepared by: SuperAchiever System"],
         ["This report is auto-generated by SuperAchiever Data Management System"],
@@ -496,7 +570,7 @@ export default function Cases() {
         "Agent Name": c.client_name,
         "Product": c.product_type || "N/A",
         "AFYC (RM)": (c.premium || 0).toFixed(0),
-        "Status": c.status === "approved" ? "Approved" : "Pending",
+        "Status": getStatusLabel(c.status),
         "Submission Date": c.submission_date_timestamp 
           ? format(parseDate(c.submission_date_timestamp) || new Date(), "dd MMM yyyy") 
           : "N/A",
@@ -513,8 +587,9 @@ export default function Cases() {
       ];
       XLSX.utils.book_append_sheet(wb, wsData, "All Cases");
 
-      const approvedCount = filteredCases.filter(c => c.status === "approved").length;
-      const pendingCount = filteredCases.filter(c => c.status === "pending").length;
+      const approvedCount = filteredCases.filter(c => getStatusVariant(c.status) === "approved").length;
+      const pendingCount = filteredCases.filter(c => getStatusVariant(c.status) === "pending").length;
+      const rejectedCount = filteredCases.filter(c => getStatusVariant(c.status) === "rejected").length;
       
       const summaryData = [
         { "Metric": "Report Information", "Value": "" },
@@ -528,12 +603,13 @@ export default function Cases() {
         { "Metric": "Average AFYC per Case", "Value": filteredCases.length > 0 ? `RM ${Math.round(calculateTotalPremium() / filteredCases.length).toLocaleString()}` : "RM 0" },
         { "Metric": "", "Value": "" },
         { "Metric": "Status Breakdown", "Value": "" },
-        { "Metric": "Approved Cases", "Value": `${approvedCount} (${filteredCases.length > 0 ? Math.round((approvedCount / filteredCases.length) * 100) : 0}%)` },
+        { "Metric": "Approved/Inforce Cases", "Value": `${approvedCount} (${filteredCases.length > 0 ? Math.round((approvedCount / filteredCases.length) * 100) : 0}%)` },
         { "Metric": "Pending Cases", "Value": `${pendingCount} (${filteredCases.length > 0 ? Math.round((pendingCount / filteredCases.length) * 100) : 0}%)` },
+        { "Metric": "Rejected/Declined/Cancelled Cases", "Value": `${rejectedCount} (${filteredCases.length > 0 ? Math.round((rejectedCount / filteredCases.length) * 100) : 0}%)` },
       ];
       
       const wsSummary = XLSX.utils.json_to_sheet(summaryData);
-      wsSummary['!cols'] = [{ wch: 30 }, { wch: 30 }];
+      wsSummary['!cols'] = [{ wch: 35 }, { wch: 30 }];
       XLSX.utils.book_append_sheet(wb, wsSummary, "Summary");
 
       const dateStr = format(new Date(), "yyyyMMdd_HHmm");
@@ -570,7 +646,7 @@ export default function Cases() {
         `"${c.client_name.replace(/"/g, '""')}"`,
         `"${c.product_type || "N/A"}"`,
         (c.premium || 0).toFixed(0),
-        c.status,
+        getStatusLabel(c.status),
         c.submission_date_timestamp ? format(parseDate(c.submission_date_timestamp) || new Date(), "yyyy-MM-dd") : "N/A",
         c.enforce_date ? format(parseDate(c.enforce_date) || new Date(), "yyyy-MM-dd") : "N/A",
         c.payment_frequency || "N/A"
@@ -597,6 +673,31 @@ export default function Cases() {
     return filteredCases.reduce((sum, c) => sum + (c.premium || 0), 0);
   };
 
+  // Custom StatusBadge component for colored status display
+  const StatusBadge = ({ status }: { status: string }) => {
+    const variant = getStatusVariant(status);
+    const label = getStatusLabel(status);
+    
+    const variantStyles = {
+      approved: "bg-emerald-100 text-emerald-700 border-emerald-200",
+      pending: "bg-amber-100 text-amber-700 border-amber-200",
+      rejected: "bg-rose-100 text-rose-700 border-rose-200"
+    };
+    
+    const icons = {
+      approved: <CheckCircle2 className="h-3 w-3 mr-1" />,
+      pending: <Clock className="h-3 w-3 mr-1" />,
+      rejected: <AlertCircle className="h-3 w-3 mr-1" />
+    };
+    
+    return (
+      <Badge variant="outline" className={cn("font-medium", variantStyles[variant])}>
+        {icons[variant]}
+        {label}
+      </Badge>
+    );
+  };
+
   if (isLoading) return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-50 to-slate-100">
       <div className="text-center space-y-4 animate-fade-in">
@@ -610,6 +711,13 @@ export default function Cases() {
   );
   
   if (!user) return <Navigate to="/auth" replace />;
+
+  // Calculate stats for the cards using getStatusVariant
+  const totalCasesCount = filteredCases.length;
+  const approvedCount = filteredCases.filter(c => getStatusVariant(c.status) === "approved").length;
+  const pendingCount = filteredCases.filter(c => getStatusVariant(c.status) === "pending").length;
+  const rejectedCount = filteredCases.filter(c => getStatusVariant(c.status) === "rejected").length;
+  const totalPremiumSum = calculateTotalPremium();
 
   return (
     <DashboardLayout>
@@ -669,7 +777,7 @@ export default function Cases() {
           )}
         </div>
 
-        {/* Stats Cards */}
+        {/* Stats Cards - Fixed to show correct counts */}
         <div className="grid gap-4 md:grid-cols-4">
           <Card className="border-none shadow-lg hover:shadow-xl transition-all duration-300 animate-fade-in-up bg-gradient-to-br from-blue-50 to-white">
             <CardContent className="flex items-center gap-4 p-5">
@@ -677,7 +785,7 @@ export default function Cases() {
                 <Database className="h-6 w-6 text-blue-600" />
               </div>
               <div>
-                <p className="text-2xl font-black text-blue-900">{totalCount}</p>
+                <p className="text-2xl font-black text-blue-900">{totalCasesCount}</p>
                 <p className="text-[10px] font-bold text-blue-500 uppercase tracking-widest">Total Cases</p>
               </div>
             </CardContent>
@@ -689,8 +797,8 @@ export default function Cases() {
                 <CheckCircle2 className="h-6 w-6 text-emerald-600" />
               </div>
               <div>
-                <p className="text-2xl font-black text-emerald-900">{filteredCases.filter(c => c.status === "approved").length}</p>
-                <p className="text-[10px] font-bold text-emerald-500 uppercase tracking-widest">Approved</p>
+                <p className="text-2xl font-black text-emerald-900">{approvedCount}</p>
+                <p className="text-[10px] font-bold text-emerald-500 uppercase tracking-widest">Approved/Inforce</p>
               </div>
             </CardContent>
           </Card>
@@ -701,7 +809,7 @@ export default function Cases() {
                 <Clock className="h-6 w-6 text-amber-600" />
               </div>
               <div>
-                <p className="text-2xl font-black text-amber-900">{filteredCases.filter(c => c.status === "pending").length}</p>
+                <p className="text-2xl font-black text-amber-900">{pendingCount}</p>
                 <p className="text-[10px] font-bold text-amber-500 uppercase tracking-widest">Pending</p>
               </div>
             </CardContent>
@@ -713,7 +821,7 @@ export default function Cases() {
                 <TrendingUp className="h-6 w-6 text-purple-600" />
               </div>
               <div>
-                <p className="text-2xl font-black text-purple-900">{formatAFYC(calculateTotalPremium())}</p>
+                <p className="text-2xl font-black text-purple-900">{formatAFYC(totalPremiumSum)}</p>
                 <p className="text-[10px] font-bold text-purple-500 uppercase tracking-widest">Total AFYC</p>
               </div>
             </CardContent>
@@ -810,21 +918,22 @@ export default function Cases() {
           </div>
 
           <Select value={filters.status} onValueChange={(value) => setFilters(prev => ({ ...prev, status: value }))}>
-            <SelectTrigger className="w-32">
+            <SelectTrigger className="w-36">
               <SelectValue placeholder="Status" />
             </SelectTrigger>
             <SelectContent>
-              {statusOptions.map((status) => (
-                <SelectItem key={status} value={status}>
-                  {status === "all" ? "All Status" : status.charAt(0).toUpperCase() + status.slice(1)}
-                </SelectItem>
-              ))}
+              <SelectItem value="all">All Status</SelectItem>
+              <SelectItem value="inforce">Inforce / Approved</SelectItem>
+              <SelectItem value="pending">Pending</SelectItem>
+              <SelectItem value="rejected">Rejected</SelectItem>
+              <SelectItem value="declined">Declined</SelectItem>
+              <SelectItem value="cancelled">Cancelled</SelectItem>
             </SelectContent>
           </Select>
 
           <Select value={filters.paymentFrequency} onValueChange={(value) => setFilters(prev => ({ ...prev, paymentFrequency: value }))}>
             <SelectTrigger className="w-36">
-              <SelectValue placeholder="Payment Freq" />
+              <SelectValue placeholder="Payment Frequency" />
             </SelectTrigger>
             <SelectContent>
               {paymentFrequencyOptions.map((freq) => (
@@ -848,11 +957,11 @@ export default function Cases() {
           <div className="flex items-center gap-3">
             <Badge variant="outline" className="px-3 py-1 text-sm font-bold">
               <FileText className="h-3 w-3 mr-1" />
-              {filteredCases.length} of {totalCount} cases
+              {totalCasesCount} of {totalCount} cases
             </Badge>
             <Badge variant="outline" className="px-3 py-1 text-sm font-bold bg-emerald-50 text-emerald-700 border-emerald-200">
               <TrendingUp className="h-3 w-3 mr-1" />
-              {formatAFYC(calculateTotalPremium())}
+              {formatAFYC(totalPremiumSum)}
             </Badge>
           </div>
           {filters.dateRange.from && filters.dateRange.to && (
@@ -897,7 +1006,7 @@ export default function Cases() {
                         <TableHead className="font-bold">Agent Name</TableHead>
                         <TableHead className="font-bold">Product</TableHead>
                         <TableHead className="text-right font-bold">AFYC</TableHead>
-                        <TableHead className="font-bold">Payment Freq</TableHead>
+                        <TableHead className="font-bold">Payment Frequency</TableHead>
                         <TableHead className="font-bold">Status</TableHead>
                         <TableHead className="font-bold">Enforce Date</TableHead>
                       </TableRow>
@@ -940,9 +1049,7 @@ export default function Cases() {
                             )}
                           </TableCell>
                           <TableCell>
-                            <StatusBadge variant={item.status === "approved" ? "approved" : "pending"}>
-                              {item.status}
-                            </StatusBadge>
+                            <StatusBadge status={item.status} />
                           </TableCell>
                           <TableCell className="text-xs text-muted-foreground">
                             {formatDisplayDate(item.enforce_date)}

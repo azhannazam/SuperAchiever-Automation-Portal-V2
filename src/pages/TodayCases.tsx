@@ -12,7 +12,6 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { StatusBadge } from "@/components/ui/status-badge";
 import { supabase } from "@/integrations/supabase/client";
 import { 
   Download, 
@@ -27,6 +26,7 @@ import {
   RefreshCw,
   Zap,
   FileSpreadsheet,
+  AlertCircle,
 } from "lucide-react";
 import { format, parseISO, isValid, startOfDay, endOfDay } from "date-fns";
 import { Badge } from "@/components/ui/badge";
@@ -47,6 +47,17 @@ interface Case {
   payment_frequency: string | null;
   created_at: string;
 }
+
+// Helper function to check if a status is pending
+const isPendingStatus = (status: string): boolean => {
+  if (!status) return false;
+  const statusLower = status.toLowerCase();
+  return statusLower.includes('pending') || 
+         statusLower.includes('underwriting') || 
+         statusLower.includes('counter') || 
+         statusLower.includes('payment') ||
+         statusLower === 'entered';
+};
 
 // Helper function to safely parse dates
 const parseDate = (dateString: string | null): Date | null => {
@@ -73,13 +84,90 @@ const formatDisplayDate = (dateString: string | null): string => {
   return format(date, "dd MMM yyyy");
 };
 
-// Format AFYC
+// Format AFYC - returns just the number
+const formatAFYCNumber = (value: number | null): string => {
+  if (!value) return "0";
+  return `${value.toLocaleString('en-MY', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  })}`;
+};
+
+// Format AFYC with suffix for display
 const formatAFYC = (value: number | null): string => {
   if (!value) return "0 AFYC";
   return `${value.toLocaleString('en-MY', {
     minimumFractionDigits: 0,
     maximumFractionDigits: 0
   })} AFYC`;
+};
+
+// Get status badge variant based on actual status text
+const getStatusVariant = (status: string): "approved" | "pending" | "rejected" => {
+  const statusLower = status.toLowerCase();
+  
+  // Check for approved/inforce statuses (Green)
+  if (statusLower.includes('inforce') || 
+      statusLower.includes('approved') || 
+      statusLower.includes('issued') ||
+      statusLower === 'inforce') {
+    return "approved";
+  }
+  
+  // Check for rejected/declined/cancelled statuses (Red)
+  if (statusLower.includes('reject') || 
+      statusLower.includes('decline') || 
+      statusLower.includes('cancelled') ||
+      statusLower.includes('cancel')) {
+    return "rejected";
+  }
+  
+  // Everything else is pending (Yellow)
+  return "pending";
+};
+
+// Get human-readable status label
+const getStatusLabel = (status: string): string => {
+  const statusLower = status.toLowerCase();
+  
+  if (statusLower.includes('inforce')) return "Inforce";
+  if (statusLower.includes('approved')) return "Approved";
+  if (statusLower.includes('issued')) return "Issued";
+  if (statusLower.includes('pending for underwriting')) return "Pending Underwriting";
+  if (statusLower.includes('pending for payment')) return "Pending Payment";
+  if (statusLower.includes('pending for counter offer')) return "Pending Counter Offer";
+  if (statusLower.includes('reject')) return "Rejected";
+  if (statusLower.includes('decline')) return "Declined";
+  if (statusLower.includes('cancelled')) return "Cancelled";
+  if (statusLower.includes('entered')) return "Entered";
+  
+  // Return original status with first letter capitalized
+  return status.charAt(0).toUpperCase() + status.slice(1);
+};
+
+// Custom StatusBadge component for colored status display
+const StatusBadge = ({ status }: { status: string }) => {
+  const variant = getStatusVariant(status);
+  const label = getStatusLabel(status);
+  
+  const variantStyles = {
+    approved: "bg-emerald-100 text-emerald-700 border-emerald-200",
+    pending: "bg-amber-100 text-amber-700 border-amber-200",
+    rejected: "bg-rose-100 text-rose-700 border-rose-200"
+  };
+  
+  const icons = {
+    approved: <CheckCircle2 className="h-3 w-3 mr-1" />,
+    pending: <Clock className="h-3 w-3 mr-1" />,
+    rejected: <AlertCircle className="h-3 w-3 mr-1" />
+  };
+  
+  return (
+    <Badge variant="outline" className={cn("font-medium", variantStyles[variant])}>
+      {icons[variant]}
+      {label}
+    </Badge>
+  );
 };
 
 export default function TodayCases() {
@@ -189,10 +277,8 @@ export default function TodayCases() {
     setExporting(true);
 
     try {
-      // Create a new workbook
       const wb = XLSX.utils.book_new();
 
-      // ===== SHEET 1: Cover Page with Logo =====
       const coverData = [
         ["SUPERACHIEVER"],
         ["Daily Submissions Report"],
@@ -211,21 +297,17 @@ export default function TodayCases() {
       ];
       
       const wsCover = XLSX.utils.aoa_to_sheet(coverData);
-      
-      // Set column widths for cover sheet
       wsCover['!cols'] = [{ wch: 50 }];
-      
       XLSX.utils.book_append_sheet(wb, wsCover, "Cover");
 
-      // ===== SHEET 2: Daily Submissions Data with Styling =====
-      const exportData = cases.map(c => ({
-        "No.": cases.indexOf(c) + 1,
+      const exportData = cases.map((c, index) => ({
+        "No.": index + 1,
         "Policy Number": c.policy_number,
         "Agent ID": c.agent_id,
         "Agent Name": c.client_name,
         "Product": c.product_type || "N/A",
         "AFYC (RM)": (c.premium || 0).toFixed(0),
-        "Status": c.status === "approved" ? "Approved" : "Pending",
+        "Status": getStatusLabel(c.status),
         "Submission Date": c.submission_date_timestamp 
           ? format(parseDate(c.submission_date_timestamp) || new Date(), "dd MMM yyyy") 
           : "N/A",
@@ -236,24 +318,16 @@ export default function TodayCases() {
       }));
 
       const wsData = XLSX.utils.json_to_sheet(exportData);
-      
-      // Set column widths
       wsData['!cols'] = [
-        { wch: 6 },   // No.
-        { wch: 18 },  // Policy Number
-        { wch: 12 },  // Agent ID
-        { wch: 30 },  // Agent Name
-        { wch: 15 },  // Product
-        { wch: 15 },  // AFYC
-        { wch: 12 },  // Status
-        { wch: 15 },  // Submission Date
-        { wch: 15 },  // Enforce Date
-        { wch: 18 },  // Payment Frequency
+        { wch: 6 }, { wch: 18 }, { wch: 12 }, { wch: 30 }, { wch: 15 },
+        { wch: 15 }, { wch: 12 }, { wch: 15 }, { wch: 15 }, { wch: 18 },
       ];
-      
       XLSX.utils.book_append_sheet(wb, wsData, "Daily Submissions");
 
-      // ===== SHEET 3: Summary Statistics =====
+      const approvedCount = getApprovedCount();
+      const pendingCount = getPendingCount();
+      const rejectedCount = getRejectedCount();
+      
       const summaryData = [
         { "Metric": "Report Information", "Value": "" },
         { "Metric": "Report Date", "Value": format(new Date(), "dd MMMM yyyy") },
@@ -266,13 +340,13 @@ export default function TodayCases() {
         { "Metric": "Average AFYC per Case", "Value": cases.length > 0 ? `RM ${Math.round(calculateTotalPremium() / cases.length).toLocaleString()}` : "RM 0" },
         { "Metric": "", "Value": "" },
         { "Metric": "Status Breakdown", "Value": "" },
-        { "Metric": "Approved Cases", "Value": `${getApprovedCount()} (${cases.length > 0 ? Math.round((getApprovedCount() / cases.length) * 100) : 0}%)` },
-        { "Metric": "Pending Cases", "Value": `${getPendingCount()} (${cases.length > 0 ? Math.round((getPendingCount() / cases.length) * 100) : 0}%)` },
+        { "Metric": "Approved/Inforce Cases", "Value": `${approvedCount} (${cases.length > 0 ? Math.round((approvedCount / cases.length) * 100) : 0}%)` },
+        { "Metric": "Pending Cases", "Value": `${pendingCount} (${cases.length > 0 ? Math.round((pendingCount / cases.length) * 100) : 0}%)` },
+        { "Metric": "Rejected/Declined/Cancelled Cases", "Value": `${rejectedCount} (${cases.length > 0 ? Math.round((rejectedCount / cases.length) * 100) : 0}%)` },
         { "Metric": "", "Value": "" },
         { "Metric": "Payment Frequency Breakdown", "Value": "" },
       ];
       
-      // Add payment frequency breakdown
       const frequencyMap = new Map<string, number>();
       cases.forEach(c => {
         const freq = c.payment_frequency || "Not Specified";
@@ -291,10 +365,9 @@ export default function TodayCases() {
       );
       
       const wsSummary = XLSX.utils.json_to_sheet(summaryData);
-      wsSummary['!cols'] = [{ wch: 30 }, { wch: 30 }];
+      wsSummary['!cols'] = [{ wch: 35 }, { wch: 30 }];
       XLSX.utils.book_append_sheet(wb, wsSummary, "Summary");
 
-      // ===== SHEET 4: Agent Performance =====
       const agentPerformance = new Map<string, { name: string; cases: number; afyc: number }>();
       cases.forEach(c => {
         if (!agentPerformance.has(c.agent_id)) {
@@ -323,20 +396,13 @@ export default function TodayCases() {
       
       const wsAgents = XLSX.utils.json_to_sheet(agentData);
       wsAgents['!cols'] = [
-        { wch: 8 },   // Rank
-        { wch: 12 },  // Agent ID
-        { wch: 30 },  // Agent Name
-        { wch: 12 },  // Total Cases
-        { wch: 15 },  // Total AFYC
-        { wch: 15 },  // Average AFYC
+        { wch: 8 }, { wch: 12 }, { wch: 30 }, { wch: 12 }, { wch: 15 }, { wch: 15 },
       ];
       XLSX.utils.book_append_sheet(wb, wsAgents, "Agent Performance");
 
-      // Generate filename
       const dateStr = format(new Date(), "yyyyMMdd");
       const filename = `SuperAchiever_Daily_Submissions_${dateStr}.xlsx`;
 
-      // Export
       XLSX.writeFile(wb, filename);
       
       toast.success(`Exported ${cases.length} cases to beautifully formatted Excel`);
@@ -355,15 +421,8 @@ export default function TodayCases() {
     }
 
     const headers = [
-      "Policy Number", 
-      "Agent ID", 
-      "Agent Name", 
-      "Product", 
-      "AFYC", 
-      "Status", 
-      "Submission Date",
-      "Enforce Date",
-      "Payment Frequency"
+      "Policy Number", "Agent ID", "Agent Name", "Product", "AFYC", 
+      "Status", "Submission Date", "Enforce Date", "Payment Frequency"
     ];
     
     const csvContent = [
@@ -374,7 +433,7 @@ export default function TodayCases() {
         `"${c.client_name.replace(/"/g, '""')}"`,
         `"${c.product_type || "N/A"}"`,
         (c.premium || 0).toFixed(0),
-        c.status,
+        getStatusLabel(c.status),
         c.submission_date_timestamp ? format(parseDate(c.submission_date_timestamp) || new Date(), "yyyy-MM-dd") : "N/A",
         c.enforce_date ? format(parseDate(c.enforce_date) || new Date(), "yyyy-MM-dd") : "N/A",
         c.payment_frequency || "N/A"
@@ -401,15 +460,23 @@ export default function TodayCases() {
   };
 
   const getApprovedCount = () => {
-    return cases.filter(c => c.status === "approved").length;
+    return cases.filter(c => getStatusVariant(c.status) === "approved").length;
   };
 
   const getPendingCount = () => {
-    return cases.filter(c => c.status === "pending").length;
+    return cases.filter(c => getStatusVariant(c.status) === "pending").length;
+  };
+
+  const getRejectedCount = () => {
+    return cases.filter(c => getStatusVariant(c.status) === "rejected").length;
   };
 
   if (isLoading) return <div className="min-h-screen flex items-center justify-center"><Loader2 className="animate-spin" /></div>;
   if (!user) return <Navigate to="/auth" replace />;
+
+  const totalPremium = calculateTotalPremium();
+  const approvedCount = getApprovedCount();
+  const pendingCount = getPendingCount();
 
   return (
     <DashboardLayout>
@@ -436,7 +503,6 @@ export default function TodayCases() {
           </div>
           
           <div className="flex items-center gap-2">
-            {/* Auto-refresh toggle */}
             <Button 
               variant="outline" 
               size="sm"
@@ -502,48 +568,48 @@ export default function TodayCases() {
           </Card>
         )}
 
-        {/* Stats Cards */}
+        {/* Stats Cards - Fixed to show correct counts */}
         <div className="grid gap-4 md:grid-cols-4">
-          <Card className="bg-gradient-to-br from-green-50 to-white border-none shadow-sm hover:shadow-md transition-all duration-300 animate-fade-in-up">
+          <Card className="bg-gradient-to-br from-blue-50 to-white border-none shadow-sm hover:shadow-md transition-all duration-300 animate-fade-in-up">
             <CardContent className="p-6">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm font-medium text-green-600">Total Cases</p>
-                  <p className="text-3xl font-bold text-green-900">{cases.length}</p>
-                  <p className="text-xs text-green-500 mt-1">Today</p>
-                </div>
-                <div className="h-12 w-12 rounded-full bg-green-100 flex items-center justify-center">
-                  <FileText className="h-6 w-6 text-green-600" />
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className="bg-gradient-to-br from-emerald-50 to-white border-none shadow-sm hover:shadow-md transition-all duration-300 animate-fade-in-up" style={{ animationDelay: "0.1s" }}>
-            <CardContent className="p-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium text-emerald-600">Total AFYC</p>
-                  <p className="text-2xl font-bold text-emerald-900">{formatAFYC(calculateTotalPremium())}</p>
-                  <p className="text-xs text-emerald-500 mt-1">Today's value</p>
-                </div>
-                <div className="h-12 w-12 rounded-full bg-emerald-100 flex items-center justify-center">
-                  <TrendingUp className="h-6 w-6 text-emerald-600" />
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className="bg-gradient-to-br from-blue-50 to-white border-none shadow-sm hover:shadow-md transition-all duration-300 animate-fade-in-up" style={{ animationDelay: "0.2s" }}>
-            <CardContent className="p-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium text-blue-600">Approved</p>
-                  <p className="text-3xl font-bold text-blue-900">{getApprovedCount()}</p>
-                  <p className="text-xs text-blue-500 mt-1">Cases</p>
+                  <p className="text-sm font-medium text-blue-600">Total Cases</p>
+                  <p className="text-3xl font-bold text-blue-900">{cases.length}</p>
+                  <p className="text-xs text-blue-500 mt-1">Today</p>
                 </div>
                 <div className="h-12 w-12 rounded-full bg-blue-100 flex items-center justify-center">
-                  <CheckCircle2 className="h-6 w-6 text-blue-600" />
+                  <FileText className="h-6 w-6 text-blue-600" />
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="bg-gradient-to-br from-purple-50 to-white border-none shadow-sm hover:shadow-md transition-all duration-300 animate-fade-in-up" style={{ animationDelay: "0.1s" }}>
+            <CardContent className="p-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium text-purple-600">Total AFYC</p>
+                  <p className="text-2xl font-bold text-purple-900">{formatAFYC(totalPremium)}</p>
+                  <p className="text-xs text-purple-500 mt-1">Today's value</p>
+                </div>
+                <div className="h-12 w-12 rounded-full bg-purple-100 flex items-center justify-center">
+                  <TrendingUp className="h-6 w-6 text-purple-600" />
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="bg-gradient-to-br from-emerald-50 to-white border-none shadow-sm hover:shadow-md transition-all duration-300 animate-fade-in-up" style={{ animationDelay: "0.2s" }}>
+            <CardContent className="p-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium text-emerald-600">Approved/Inforce</p>
+                  <p className="text-3xl font-bold text-emerald-900">{approvedCount}</p>
+                  <p className="text-xs text-emerald-500 mt-1">Cases</p>
+                </div>
+                <div className="h-12 w-12 rounded-full bg-emerald-100 flex items-center justify-center">
+                  <CheckCircle2 className="h-6 w-6 text-emerald-600" />
                 </div>
               </div>
             </CardContent>
@@ -554,7 +620,7 @@ export default function TodayCases() {
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm font-medium text-amber-600">Pending</p>
-                  <p className="text-3xl font-bold text-amber-900">{getPendingCount()}</p>
+                  <p className="text-3xl font-bold text-amber-900">{pendingCount}</p>
                   <p className="text-xs text-amber-500 mt-1">Cases</p>
                 </div>
                 <div className="h-12 w-12 rounded-full bg-amber-100 flex items-center justify-center">
@@ -621,7 +687,7 @@ export default function TodayCases() {
                         <TableHead className="font-bold">Agent Name</TableHead>
                         <TableHead className="font-bold">Product</TableHead>
                         <TableHead className="text-right font-bold">AFYC</TableHead>
-                        <TableHead className="font-bold">Payment Freq</TableHead>
+                        <TableHead className="font-bold">Payment Frequency</TableHead>
                         <TableHead className="font-bold">Status</TableHead>
                         <TableHead className="font-bold">Enforce Date</TableHead>
                       </TableRow>
@@ -664,9 +730,7 @@ export default function TodayCases() {
                             )}
                           </TableCell>
                           <TableCell>
-                            <StatusBadge variant={item.status === "approved" ? "approved" : "pending"}>
-                              {item.status}
-                            </StatusBadge>
+                            <StatusBadge status={item.status} />
                           </TableCell>
                           <TableCell className="text-xs text-muted-foreground">
                             {formatDisplayDate(item.enforce_date)}
@@ -683,11 +747,11 @@ export default function TodayCases() {
                       Total Cases Today: <span className="font-bold text-primary">{cases.length}</span>
                     </p>
                     <p className="text-sm text-muted-foreground">
-                      Total AFYC: <span className="font-bold text-primary">{formatAFYC(calculateTotalPremium())}</span>
+                      Total AFYC: <span className="font-bold text-primary">{formatAFYC(totalPremium)}</span>
                     </p>
                     <p className="text-sm text-muted-foreground">
-                      Approved: <span className="font-bold text-green-600">{getApprovedCount()}</span> | 
-                      Pending: <span className="font-bold text-amber-600">{getPendingCount()}</span>
+                      Approved: <span className="font-bold text-emerald-600">{approvedCount}</span> | 
+                      Pending: <span className="font-bold text-amber-600">{pendingCount}</span>
                     </p>
                   </div>
                 </div>

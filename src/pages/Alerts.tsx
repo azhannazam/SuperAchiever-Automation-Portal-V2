@@ -33,10 +33,23 @@ import {
   MailCheck,
   MailOpen,
   X,
+  Hourglass,
+  Flame,
 } from "lucide-react";
 import { format, differenceInDays } from "date-fns";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+
+// Helper function to check if a status is pending
+const isPendingStatus = (status: string): boolean => {
+  if (!status) return false;
+  const statusLower = status.toLowerCase();
+  return statusLower.includes('pending') || 
+         statusLower.includes('underwriting') || 
+         statusLower.includes('counter') || 
+         statusLower.includes('payment') ||
+         statusLower === 'entered';
+};
 
 // Info icon component
 const InfoIcon = ({ className }: { className?: string }) => (
@@ -70,15 +83,19 @@ export default function Alerts() {
     try {
       setLoadingData(true);
       if (isAdmin) {
+        // Fetch ALL cases first, then filter for pending statuses
         const { data, error } = await supabase
           .from("cases")
           .select("*")
-          .eq("status", "pending")
           .order("submission_date_timestamp", { ascending: false });
 
         if (error) throw error;
-        setAlerts(data || []);
-        if (showToast) toast.success(`Found ${data?.length || 0} pending cases`);
+        
+        // Filter for pending statuses (case insensitive)
+        const pendingCases = (data || []).filter(caseItem => isPendingStatus(caseItem.status));
+        setAlerts(pendingCases);
+        
+        if (showToast) toast.success(`Found ${pendingCases.length} pending cases`);
       } else {
         const { data, error } = await supabase
           .from("alerts")
@@ -151,7 +168,7 @@ export default function Alerts() {
       await supabase.from("alerts").insert({
         user_id: profile.id,
         title: `⚠️ Admin Follow-up: ${selectedCase.policy_number}`,
-        message: customMessage || `Proposal for ${selectedCase.client_name} is still ${selectedCase.remark} after ${days} days.`,
+        message: customMessage || `Proposal for ${selectedCase.client_name} is still ${selectedCase.status} after ${days} days.`,
         is_read: false
       });
 
@@ -161,6 +178,17 @@ export default function Alerts() {
       toast.error("Failed to notify agent"); 
     }
   };
+
+  // Calculate stats for admin dashboard
+  const totalPending = alerts.length;
+  const pendingLessThan3Days = alerts.filter(item => {
+    const daysPending = differenceInDays(new Date(), new Date(item.submission_date_timestamp));
+    return daysPending < 3;
+  }).length;
+  const urgentCases = alerts.filter(item => {
+    const daysPending = differenceInDays(new Date(), new Date(item.submission_date_timestamp));
+    return daysPending > 7;
+  }).length;
 
   if (isLoading) return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-50 to-slate-100">
@@ -216,44 +244,44 @@ export default function Alerts() {
                 <Bell className="h-6 w-6 text-blue-600" />
               </div>
               <div>
-                <p className="text-2xl font-black text-blue-900">{alerts.length}</p>
-                <p className="text-[10px] font-bold text-blue-500 uppercase tracking-widest">{isAdmin ? "Pending Approval" : "Total Alerts"}</p>
+                <p className="text-2xl font-black text-blue-900">{totalPending}</p>
+                <p className="text-[10px] font-bold text-blue-500 uppercase tracking-widest">Total Pending Cases</p>
               </div>
             </CardContent>
           </Card>
           
-          <Card className="border-none shadow-lg hover:shadow-xl transition-all duration-300 animate-fade-in-up bg-gradient-to-br from-amber-50 to-white" style={{ animationDelay: "0.1s" }}>
+          <Card className="border-none shadow-lg hover:shadow-xl transition-all duration-300 animate-fade-in-up bg-gradient-to-br from-orange-50 to-white" style={{ animationDelay: "0.1s" }}>
             <CardContent className="flex items-center gap-4 p-5">
-              <div className="rounded-xl bg-amber-100 p-3">
-                <Clock className="h-6 w-6 text-amber-600" />
+              <div className="rounded-xl bg-orange-100 p-3 group-hover:scale-110 transition-transform duration-300">
+                <Hourglass className="h-6 w-6 text-orange-600" />
               </div>
               <div>
-                <p className="text-2xl font-black text-amber-900">{isAdmin ? alerts.length : unreadCount}</p>
-                <p className="text-[10px] font-bold text-amber-500 uppercase tracking-widest">{isAdmin ? "To-Action" : "Unread"}</p>
+                <p className="text-2xl font-black text-orange-900">{pendingLessThan3Days}</p>
+                <p className="text-[10px] font-bold text-orange-500 uppercase tracking-widest">Under Review (&lt; 3 days)</p>
               </div>
             </CardContent>
           </Card>
           
-          <Card className="border-none shadow-lg hover:shadow-xl transition-all duration-300 animate-fade-in-up bg-gradient-to-br from-emerald-50 to-white" style={{ animationDelay: "0.2s" }}>
+          <Card className="border-none shadow-lg hover:shadow-xl transition-all duration-300 animate-fade-in-up bg-gradient-to-br from-red-50 to-white" style={{ animationDelay: "0.2s" }}>
             <CardContent className="flex items-center gap-4 p-5">
-              <div className="rounded-xl bg-emerald-100 p-3">
+              <div className="rounded-xl bg-red-100 p-3 group-hover:scale-110 transition-transform duration-300">
+                <Flame className="h-6 w-6 text-red-600" />
+              </div>
+              <div>
+                <p className="text-2xl font-black text-red-900">{urgentCases}</p>
+                <p className="text-[10px] font-bold text-red-500 uppercase tracking-widest">Urgent (&gt; 7 days)</p>
+              </div>
+            </CardContent>
+          </Card>
+          
+          <Card className="border-none shadow-lg hover:shadow-xl transition-all duration-300 animate-fade-in-up bg-gradient-to-br from-emerald-50 to-white" style={{ animationDelay: "0.3s" }}>
+            <CardContent className="flex items-center gap-4 p-5">
+              <div className="rounded-xl bg-emerald-100 p-3 group-hover:scale-110 transition-transform duration-300">
                 <TrendingUp className="h-6 w-6 text-emerald-600" />
               </div>
               <div>
                 <p className="text-2xl font-black text-emerald-900">Active</p>
                 <p className="text-[10px] font-bold text-emerald-500 uppercase tracking-widest">Database Sync</p>
-              </div>
-            </CardContent>
-          </Card>
-          
-          <Card className="border-none shadow-lg hover:shadow-xl transition-all duration-300 animate-fade-in-up bg-gradient-to-br from-purple-50 to-white" style={{ animationDelay: "0.3s" }}>
-            <CardContent className="flex items-center gap-4 p-5">
-              <div className="rounded-xl bg-purple-100 p-3">
-                <Zap className="h-6 w-6 text-purple-600" />
-              </div>
-              <div>
-                <p className="text-2xl font-black text-purple-900">Real-time</p>
-                <p className="text-[10px] font-bold text-purple-500 uppercase tracking-widest">Monitoring</p>
               </div>
             </CardContent>
           </Card>
@@ -325,6 +353,12 @@ export default function Alerts() {
                   const daysPending = differenceInDays(new Date(), new Date(itemDate));
                   const isCritical = daysPending >= 7;
                   const isWarning = daysPending >= 3 && daysPending < 7;
+                  
+                  // Get display status
+                  const displayStatus = isAdmin ? item.status : item.title;
+                  const statusLabel = isAdmin ? 
+                    (item.status || "Pending").charAt(0).toUpperCase() + (item.status || "pending").slice(1) : 
+                    "Alert";
 
                   return (
                     <div 
@@ -364,8 +398,13 @@ export default function Alerts() {
                                 isWarning ? 'bg-amber-100 text-amber-700' : 
                                 'bg-slate-100 text-slate-600'
                               )}>
-                                {daysPending} Days {isAdmin ? 'Stale' : 'Ago'}
+                                {daysPending} Days {isAdmin ? 'Pending' : 'Ago'}
                               </Badge>
+                              {isAdmin && (
+                                <Badge className="bg-amber-100 text-amber-700 text-[10px] font-black uppercase px-2 py-0.5">
+                                  {statusLabel}
+                                </Badge>
+                              )}
                             </div>
                             {isAdmin ? (
                               <div className="grid grid-cols-1 md:grid-cols-2 gap-x-4 gap-y-2 text-sm">
@@ -385,9 +424,9 @@ export default function Alerts() {
                                   </span>
                                 </div>
                                 <div className="flex items-center gap-2">
-                                  <AlertTriangle className="h-3 w-3 text-red-500" />
-                                  <span className="text-[10px] font-bold text-red-500 uppercase">Status:</span>
-                                  <span className="text-xs font-medium text-red-600">{item.remark || "Action Required"}</span>
+                                  <AlertTriangle className="h-3 w-3 text-amber-500" />
+                                  <span className="text-[10px] font-bold text-amber-500 uppercase">Status:</span>
+                                  <span className="text-xs font-medium text-amber-600">{item.status || "Pending"}</span>
                                 </div>
                               </div>
                             ) : (
@@ -447,6 +486,10 @@ export default function Alerts() {
                 <p className="text-xs text-slate-500 flex items-center gap-2">
                   <InfoIcon className="h-3 w-3" />
                   Case: {selectedCase?.policy_number}
+                </p>
+                <p className="text-xs text-slate-500 flex items-center gap-2 mt-1">
+                  <AlertTriangle className="h-3 w-3 text-amber-500" />
+                  Status: {selectedCase?.status}
                 </p>
               </div>
               <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
