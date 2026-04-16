@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Shield, Users, AlertCircle, Loader2, ArrowRight, CheckCircle2, Sparkles, Mail, Lock, User, Eye, EyeOff, Zap, Crown, TrendingUp, Award } from "lucide-react";
+import { Shield, Users, AlertCircle, Loader2, ArrowRight, CheckCircle2, Sparkles, Mail, Lock, User, Eye, EyeOff, Zap, Crown, TrendingUp, Award, Sun } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { z } from "zod";
 import { toast } from "sonner";
@@ -66,12 +66,12 @@ export default function Auth() {
 
   if (isLoading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900">
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-900 via-blue-800 to-yellow-800">
         <motion.div
           animate={{ rotate: 360 }}
           transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
         >
-          <Loader2 className="h-12 w-12 text-primary" />
+          <Loader2 className="h-12 w-12 text-yellow-400" />
         </motion.div>
       </div>
     );
@@ -82,33 +82,38 @@ export default function Auth() {
   }
 
   return (
-    <div className="min-h-screen flex relative overflow-hidden bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900">
-      {/* Animated Background Elements */}
+    <div className="min-h-screen flex relative overflow-hidden bg-gradient-to-br from-blue-900 via-blue-800 to-yellow-700">
+      {/* Animated Background Elements - Blue & Yellow theme */}
       <div className="absolute inset-0 overflow-hidden pointer-events-none">
-        <div className="absolute top-20 left-10 w-72 h-72 bg-blue-500 rounded-full mix-blend-multiply filter blur-3xl opacity-10 animate-pulse" />
-        <div className="absolute bottom-20 right-10 w-96 h-96 bg-purple-500 rounded-full mix-blend-multiply filter blur-3xl opacity-10 animate-pulse delay-1000" />
-        <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-cyan-500 rounded-full mix-blend-multiply filter blur-3xl opacity-5 animate-pulse delay-2000" />
+        <div className="absolute top-20 left-10 w-72 h-72 bg-yellow-400 rounded-full mix-blend-multiply filter blur-3xl opacity-15 animate-pulse" />
+        <div className="absolute bottom-20 right-10 w-96 h-96 bg-blue-400 rounded-full mix-blend-multiply filter blur-3xl opacity-15 animate-pulse delay-1000" />
+        <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-amber-400 rounded-full mix-blend-multiply filter blur-3xl opacity-10 animate-pulse delay-2000" />
         
         {/* Floating particles */}
-        {[...Array(20)].map((_, i) => (
+        {[...Array(30)].map((_, i) => (
           <motion.div
             key={i}
-            className="absolute w-1 h-1 bg-white/20 rounded-full"
+            className="absolute w-1 h-1 bg-yellow-300/30 rounded-full"
             initial={{
               x: Math.random() * window.innerWidth,
               y: Math.random() * window.innerHeight,
             }}
             animate={{
-              y: [null, -100, 100],
+              y: [null, -150, 150],
               opacity: [0, 1, 0],
+              x: [null, Math.random() * 200 - 100, Math.random() * 200 - 100],
             }}
             transition={{
-              duration: Math.random() * 10 + 5,
+              duration: Math.random() * 15 + 8,
               repeat: Infinity,
               ease: "linear",
             }}
           />
         ))}
+        
+        {/* Sun rays effect */}
+        <div className="absolute top-0 right-0 w-96 h-96 bg-gradient-to-bl from-yellow-400/20 to-transparent rounded-full blur-2xl" />
+        <div className="absolute bottom-0 left-0 w-96 h-96 bg-gradient-to-tr from-blue-400/20 to-transparent rounded-full blur-2xl" />
       </div>
 
       {/* Left side - Branding with Animations */}
@@ -132,7 +137,7 @@ export default function Auth() {
           >
             <motion.div 
               animate={{ 
-                boxShadow: ["0 0 0 0 rgba(255,255,255,0.2)", "0 0 0 20px rgba(255,255,255,0)", "0 0 0 0 rgba(255,255,255,0)"]
+                boxShadow: ["0 0 0 0 rgba(255,215,0,0.3)", "0 0 0 20px rgba(255,215,0,0)", "0 0 0 0 rgba(255,215,0,0)"]
               }}
               transition={{ duration: 2, repeat: Infinity }}
               className="rounded-2xl bg-white/10 backdrop-blur-sm p-4 border border-white/20"
@@ -147,14 +152,14 @@ export default function Auth() {
           
           <motion.h1 
             variants={fadeInUp}
-            className="text-5xl font-black text-white tracking-tight bg-gradient-to-r from-white to-white/70 bg-clip-text text-transparent"
+            className="text-5xl font-black text-white tracking-tight bg-gradient-to-r from-yellow-300 to-white bg-clip-text text-transparent"
           >
             SuperAchiever
           </motion.h1>
           
           <motion.p 
             variants={fadeInUp}
-            className="text-lg text-white/70"
+            className="text-lg text-white/80"
           >
             Streamline your insurance case management with real-time tracking, 
             automated alerts, and live contest leaderboards.
@@ -174,9 +179,9 @@ export default function Auth() {
                 key={i}
                 variants={fadeInUp}
                 whileHover={{ scale: 1.05, y: -5 }}
-                className="rounded-xl bg-white/10 backdrop-blur-sm p-4 text-left border border-white/10 hover:border-white/20 transition-all duration-300"
+                className="rounded-xl bg-white/10 backdrop-blur-sm p-4 text-left border border-white/10 hover:border-yellow-400/50 transition-all duration-300"
               >
-                <div className="text-white/90 mb-2">{item.icon}</div>
+                <div className="text-yellow-300 mb-2">{item.icon}</div>
                 <p className="text-sm font-semibold text-white">{item.title}</p>
                 <p className="text-xs text-white/60">{item.desc}</p>
               </motion.div>
@@ -216,7 +221,7 @@ export default function Auth() {
           className="w-full max-w-md"
         >
           <Card className="border-0 bg-white/95 backdrop-blur-sm shadow-2xl rounded-2xl overflow-hidden">
-            <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-blue-500 via-purple-500 to-pink-500" />
+            <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-blue-500 via-yellow-500 to-amber-500" />
             <CardHeader className="space-y-1 text-center pt-8">
               <motion.div 
                 variants={fadeInUp}
@@ -224,7 +229,7 @@ export default function Auth() {
                 animate="animate"
                 className="lg:hidden flex justify-center mb-4"
               >
-                <div className="rounded-xl bg-gradient-to-br from-primary to-primary/60 p-3">
+                <div className="rounded-xl bg-gradient-to-br from-blue-600 to-yellow-500 p-3">
                   <img 
                     src="/logo.png" 
                     alt="Logo" 
@@ -233,7 +238,7 @@ export default function Auth() {
                 </div>
               </motion.div>
               <motion.div variants={fadeInUp}>
-                <CardTitle className="text-3xl font-bold bg-gradient-to-r from-slate-800 to-slate-600 bg-clip-text text-transparent">
+                <CardTitle className="text-3xl font-bold bg-gradient-to-r from-blue-700 to-amber-600 bg-clip-text text-transparent">
                   Welcome Back
                 </CardTitle>
                 <CardDescription className="text-sm text-slate-500">
@@ -333,7 +338,7 @@ function LoginForm() {
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             className={cn(
-              "pl-10 rounded-xl border-slate-200 focus:border-primary focus:ring-primary/20 transition-all duration-300",
+              "pl-10 rounded-xl border-slate-200 focus:border-blue-500 focus:ring-blue-500/20 transition-all duration-300",
               errors.email && "border-destructive focus:border-destructive"
             )}
           />
@@ -356,7 +361,7 @@ function LoginForm() {
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             className={cn(
-              "pl-10 pr-10 rounded-xl border-slate-200 focus:border-primary focus:ring-primary/20 transition-all duration-300",
+              "pl-10 pr-10 rounded-xl border-slate-200 focus:border-blue-500 focus:ring-blue-500/20 transition-all duration-300",
               errors.password && "border-destructive focus:border-destructive"
             )}
           />
@@ -489,7 +494,7 @@ function SignupForm({ onSuccess }: { onSuccess: () => void }) {
             value={fullName}
             onChange={(e) => setFullName(e.target.value)}
             className={cn(
-              "pl-10 rounded-xl border-slate-200 focus:border-primary focus:ring-primary/20 transition-all duration-300",
+              "pl-10 rounded-xl border-slate-200 focus:border-blue-500 focus:ring-blue-500/20 transition-all duration-300",
               errors.fullName && "border-destructive"
             )}
           />
@@ -512,7 +517,7 @@ function SignupForm({ onSuccess }: { onSuccess: () => void }) {
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             className={cn(
-              "pl-10 rounded-xl border-slate-200 focus:border-primary focus:ring-primary/20 transition-all duration-300",
+              "pl-10 rounded-xl border-slate-200 focus:border-blue-500 focus:ring-blue-500/20 transition-all duration-300",
               errors.email && "border-destructive"
             )}
           />
@@ -538,7 +543,7 @@ function SignupForm({ onSuccess }: { onSuccess: () => void }) {
               checkPasswordStrength(e.target.value);
             }}
             className={cn(
-              "pl-10 pr-10 rounded-xl border-slate-200 focus:border-primary focus:ring-primary/20 transition-all duration-300",
+              "pl-10 pr-10 rounded-xl border-slate-200 focus:border-blue-500 focus:ring-blue-500/20 transition-all duration-300",
               errors.password && "border-destructive"
             )}
           />
@@ -586,7 +591,7 @@ function SignupForm({ onSuccess }: { onSuccess: () => void }) {
             value={confirmPassword}
             onChange={(e) => setConfirmPassword(e.target.value)}
             className={cn(
-              "pl-10 pr-10 rounded-xl border-slate-200 focus:border-primary focus:ring-primary/20 transition-all duration-300",
+              "pl-10 pr-10 rounded-xl border-slate-200 focus:border-blue-500 focus:ring-blue-500/20 transition-all duration-300",
               errors.confirmPassword && "border-destructive"
             )}
           />
@@ -615,7 +620,7 @@ function SignupForm({ onSuccess }: { onSuccess: () => void }) {
           whileHover={{ scale: 1.02 }}
           whileTap={{ scale: 0.98 }}
           type="submit"
-          className="w-full py-2.5 rounded-xl bg-gradient-to-r from-purple-600 to-pink-500 text-white font-semibold shadow-lg shadow-purple-500/25 hover:shadow-xl hover:shadow-purple-500/30 transition-all duration-300 flex items-center justify-center gap-2"
+          className="w-full py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-yellow-500 text-white font-semibold shadow-lg shadow-amber-500/25 hover:shadow-xl hover:shadow-amber-500/30 transition-all duration-300 flex items-center justify-center gap-2"
           disabled={isSubmitting}
         >
           {isSubmitting ? (
