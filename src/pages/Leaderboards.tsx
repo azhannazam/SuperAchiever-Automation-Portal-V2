@@ -137,6 +137,32 @@ const formatAFYC = (value: number): string => {
   });
 };
 
+// Helper function to check if status is approved/inforce
+const isApprovedStatus = (status: string): boolean => {
+  if (!status) return false;
+  const statusLower = status.toLowerCase();
+  return statusLower.includes('inforce') || 
+         statusLower.includes('approved') || 
+         statusLower.includes('issued');
+};
+
+// Helper function to check if status is pending (includes postponed)
+const isPendingStatus = (status: string): boolean => {
+  if (!status) return false;
+  const statusLower = status.toLowerCase();
+  return statusLower.includes('pending') || 
+         statusLower.includes('underwriting') || 
+         statusLower.includes('counter') || 
+         statusLower.includes('payment') ||
+         statusLower.includes('postponed') ||
+         statusLower === 'entered';
+};
+
+// Helper function to check if status is active (approved or pending)
+const isActiveStatus = (status: string): boolean => {
+  return isApprovedStatus(status) || isPendingStatus(status);
+};
+
 export default function Leaderboards() {
   const { user, role, isLoading } = useAuth();
   const [activeCategory, setActiveCategory] = useState("GAD");
@@ -586,7 +612,17 @@ export default function Leaderboards() {
         'premium, submission_date_timestamp, agent_id, credited_agent_id'
       );
 
-      const formattedCases = allCasesWithDates.map(c => ({
+      // Filter cases to only include active cases (approved or pending)
+      // We need to fetch the status for each case first
+      const allCasesWithStatus = await fetchAllCasesWithPagination(
+        'cases',
+        'premium, submission_date_timestamp, agent_id, credited_agent_id, status'
+      );
+
+      // Filter to only active cases (approved/inforce or pending)
+      const activeCasesWithDates = allCasesWithStatus.filter(c => isActiveStatus(c.status));
+      
+      const formattedCases = activeCasesWithDates.map(c => ({
         premium: Number(c.premium || 0),
         submission_date_timestamp: c.submission_date_timestamp,
         agent_id: c.agent_id || c.credited_agent_id
@@ -594,9 +630,14 @@ export default function Leaderboards() {
       
       setAllCases(formattedCases);
 
+      // Calculate total group production from active cases only
+      const activeTotal = activeCasesWithDates.reduce((sum, c) => sum + (Number(c.premium) || 0), 0);
+      setTotalGroupProduction(activeTotal);
+      setTotalGroupCases(activeCasesWithDates.length);
+
       const allCasesData = await fetchAllCasesWithPagination(
         'cases',
-        'premium, agent_id, credited_agent_id'
+        'premium, agent_id, credited_agent_id, status'
       );
 
       if (allCasesData && profilesData) {
@@ -608,6 +649,9 @@ export default function Leaderboards() {
         allCasesData.forEach((c: any) => {
           const amt = Number(c.premium || 0);
           const agentId = c.credited_agent_id || c.agent_id;
+          
+          // Only include active cases (approved/inforce or pending)
+          if (!isActiveStatus(c.status)) return;
           
           if (profileMap.has(agentId)) {
             if (!stats[agentId]) stats[agentId] = { premium: 0, cases: 0 };
@@ -933,14 +977,14 @@ export default function Leaderboards() {
                     </Card>
                   )}
 
-                  {/* Total Production Card - Active Members count with subtitle removed */}
+                  {/* Total Production Card - Now only shows Approved + Pending (excludes Declined/Cancelled) */}
                   <Card className="bg-gradient-to-br from-primary/10 to-primary/5 border-primary/20">
                     <CardContent className="p-8">
                       <div className="grid md:grid-cols-2 gap-8">
                         <div>
                           <p className="text-sm font-medium text-primary/80 mb-2">Total Group Production</p>
                           <p className="text-4xl font-bold text-primary">{formatAFYC(totalGroupProduction)} AFYC</p>
-                          <p className="text-sm text-muted-foreground mt-2">Across {totalGroupCases} cases</p>
+                          <p className="text-sm text-muted-foreground mt-2">Across {totalGroupCases} active cases (Approved + Pending)</p>
                         </div>
                         <div>
                           <p className="text-sm font-medium text-primary/80 mb-2">Active Members</p>

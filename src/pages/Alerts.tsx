@@ -40,7 +40,7 @@ import { format, differenceInDays } from "date-fns";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 
-// Helper function to check if a status is pending
+// Helper function to check if a status is pending (includes postponed)
 const isPendingStatus = (status: string): boolean => {
   if (!status) return false;
   const statusLower = status.toLowerCase();
@@ -48,6 +48,7 @@ const isPendingStatus = (status: string): boolean => {
          statusLower.includes('underwriting') || 
          statusLower.includes('counter') || 
          statusLower.includes('payment') ||
+         statusLower.includes('postponed') ||
          statusLower === 'entered';
 };
 
@@ -83,7 +84,7 @@ export default function Alerts() {
     try {
       setLoadingData(true);
       if (isAdmin) {
-        // Fetch ALL cases first, then filter for pending statuses
+        // Fetch ALL cases first, then filter for pending statuses (including postponed)
         const { data, error } = await supabase
           .from("cases")
           .select("*")
@@ -91,7 +92,7 @@ export default function Alerts() {
 
         if (error) throw error;
         
-        // Filter for pending statuses (case insensitive)
+        // Filter for pending statuses (case insensitive) - now includes postponed
         const pendingCases = (data || []).filter(caseItem => isPendingStatus(caseItem.status));
         setAlerts(pendingCases);
         
@@ -471,9 +472,19 @@ export default function Alerts() {
           </CardContent>
         </Card>
 
-        {/* --- NOTIFY DIALOG with Animation --- */}
+        {/* --- NOTIFY DIALOG - Fixed to center on screen using portal --- */}
         <Dialog open={isNotifyOpen} onOpenChange={setIsNotifyOpen}>
-          <DialogContent className="sm:max-w-[425px] bg-white animate-in zoom-in-95 fade-in-0 duration-300">
+          <DialogContent 
+            className="sm:max-w-[425px] w-full max-w-[425px] bg-white shadow-xl rounded-xl animate-in zoom-in-95 fade-in-0 duration-300"
+            style={{
+              position: 'fixed',
+              top: '50%',
+              left: '50%',
+              transform: 'translate(-50%, -50%)',
+              zIndex: 9999,
+              margin: 0,
+            }}
+          >
             <DialogHeader>
               <DialogTitle className="flex items-center gap-2 text-xl">
                 <div className="h-1 w-8 rounded-full bg-gradient-to-r from-primary to-primary/40" />

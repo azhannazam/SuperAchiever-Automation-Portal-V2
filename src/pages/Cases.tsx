@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Navigate } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 import DashboardLayout from "@/components/layout/DashboardLayout";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import {
@@ -22,17 +22,15 @@ import {
   Calendar,
   X,
   ChevronDown,
-  ChevronUp,
   CreditCard,
   FileSpreadsheet,
   Sparkles,
   TrendingUp,
-  Filter,
   Database,
   Clock,
   CheckCircle2,
-  AlertCircle,
   RefreshCw,
+  Ban,
 } from "lucide-react";
 import { format, parseISO, isValid, subDays, subMonths, startOfToday, endOfToday, startOfMonth, endOfMonth } from "date-fns";
 import {
@@ -85,15 +83,43 @@ interface Filters {
   paymentFrequency: string;
 }
 
-// Helper function to check if a status is pending
-const isPendingStatus = (status: string): boolean => {
+// Helper function to check if a status is declined or cancelled
+const isDeclinedOrCancelled = (status: string): boolean => {
   if (!status) return false;
   const statusLower = status.toLowerCase();
-  return statusLower.includes('pending') || 
-         statusLower.includes('underwriting') || 
-         statusLower.includes('counter') || 
-         statusLower.includes('payment') ||
-         statusLower === 'entered';
+  return statusLower.includes('decline') || 
+         statusLower.includes('cancel') ||
+         statusLower === 'rejected';
+};
+
+// Helper function to check if a status should be included in AFYC calculation
+// Only Approved/Inforce, Pending, and Postponed count towards AFYC
+const isAFYCEligible = (status: string): boolean => {
+  if (!status) return false;
+  const statusLower = status.toLowerCase();
+  
+  // Approved/Inforce statuses
+  if (statusLower.includes('inforce') || 
+      statusLower.includes('approved') || 
+      statusLower.includes('issued')) {
+    return true;
+  }
+  
+  // Pending statuses
+  if (statusLower.includes('pending') || 
+      statusLower.includes('underwriting') || 
+      statusLower.includes('counter') || 
+      statusLower.includes('payment') ||
+      statusLower === 'entered') {
+    return true;
+  }
+  
+  // Postponed status
+  if (statusLower.includes('postponed')) {
+    return true;
+  }
+  
+  return false;
 };
 
 // Helper function to safely parse dates
@@ -127,7 +153,7 @@ const formatDisplayDate = (dateString: string | null): string => {
   return format(date, "dd MMM yyyy");
 };
 
-// Format AFYC/premium values - now returns just the number without "AFYC" suffix
+// Format AFYC/premium values
 const formatAFYC = (value: number | null): string => {
   if (!value) return "0";
   return `${value.toLocaleString('en-MY', {
@@ -148,15 +174,28 @@ const getStatusVariant = (status: string): "approved" | "pending" | "rejected" =
     return "approved";
   }
   
-  // Check for rejected/declined/cancelled statuses (Red)
-  if (statusLower.includes('reject') || 
-      statusLower.includes('decline') || 
-      statusLower.includes('cancelled') ||
-      statusLower.includes('cancel')) {
+  // Check for postponed (Orange/Yellow - pending category)
+  if (statusLower.includes('postponed')) {
+    return "pending";
+  }
+  
+  // Check for pending statuses (Yellow)
+  if (statusLower.includes('pending') || 
+      statusLower.includes('underwriting') || 
+      statusLower.includes('counter') || 
+      statusLower.includes('payment') ||
+      statusLower === 'entered') {
+    return "pending";
+  }
+  
+  // Check for declined/cancelled (Red)
+  if (statusLower.includes('decline') || 
+      statusLower.includes('cancel') ||
+      statusLower.includes('reject')) {
     return "rejected";
   }
   
-  // Everything else is pending (Yellow)
+  // Default to pending
   return "pending";
 };
 
@@ -170,12 +209,12 @@ const getStatusLabel = (status: string): string => {
   if (statusLower.includes('pending for underwriting')) return "Pending Underwriting";
   if (statusLower.includes('pending for payment')) return "Pending Payment";
   if (statusLower.includes('pending for counter offer')) return "Pending Counter Offer";
+  if (statusLower.includes('postponed')) return "Postponed";
   if (statusLower.includes('reject')) return "Rejected";
   if (statusLower.includes('decline')) return "Declined";
   if (statusLower.includes('cancelled')) return "Cancelled";
   if (statusLower.includes('entered')) return "Entered";
   
-  // Return original status with first letter capitalized
   return status.charAt(0).toUpperCase() + status.slice(1);
 };
 
@@ -198,22 +237,16 @@ const parseDateInput = (dateString: string): Date | null => {
   return null;
 };
 
-// Payment frequency options for filtering
 const paymentFrequencyOptions = ["all", "Monthly", "Yearly", "Quarterly"];
-
-// Status options based on actual statuses in database
-const statusOptions = ["all", "inforce", "pending", "approved", "rejected", "declined", "cancelled"];
 
 export default function Cases() {
   const { user, role, isLoading } = useAuth();
-  const [cases, setCases] = useState<Case[]>([]);
-  const [displayedCases, setDisplayedCases] = useState<Case[]>([]);
-  const [filteredCases, setFilteredCases] = useState<Case[]>([]);
+  const [allCases, setAllCases] = useState<Case[]>([]); // ALL cases for stats
+  const [displayCases, setDisplayCases] = useState<Case[]>([]); // Paginated cases for table
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const [hasMore, setHasMore] = useState(true);
-  const [totalCount, setTotalCount] = useState(0);
   const [exporting, setExporting] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [filters, setFilters] = useState<Filters>({
@@ -223,7 +256,6 @@ export default function Cases() {
     datePreset: "any",
     paymentFrequency: "all"
   });
-  const [showFilters, setShowFilters] = useState(false);
   const [dateInputs, setDateInputs] = useState({
     from: "",
     to: ""
@@ -236,15 +268,15 @@ export default function Cases() {
 
   useEffect(() => {
     if (user) {
-      fetchInitialCases();
+      fetchAllCases();
     }
   }, [user, role]);
 
   useEffect(() => {
-    if (cases.length > 0) {
-      applyFilters();
+    if (allCases.length > 0) {
+      applyFiltersAndPaginate();
     }
-  }, [cases, filters]);
+  }, [allCases, filters, currentPage]);
 
   useEffect(() => {
     if (filters.dateRange.from) {
@@ -262,32 +294,17 @@ export default function Cases() {
 
   const refreshData = async () => {
     setRefreshing(true);
-    await fetchInitialCases();
+    await fetchAllCases();
     toast.success("Data refreshed");
     setRefreshing(false);
   };
 
-  const fetchInitialCases = async () => {
+  const fetchAllCases = async () => {
     try {
       setLoading(true);
       setCurrentPage(1);
       
-      const { count: totalCount, error: countError } = await supabase
-        .from("cases")
-        .select('*', { count: 'exact', head: true });
-
-      if (countError) throw countError;
-      setTotalCount(totalCount || 0);
-
-      const { data, error } = await supabase
-        .from("cases")
-        .select("*")
-        .order("submission_date_timestamp", { ascending: false })
-        .range(0, PAGE_SIZE - 1);
-
-      if (error) throw error;
-
-      let finalCases = data || [];
+      let query = supabase.from("cases").select("*");
       
       if (!isAdmin) {
         const { data: profile } = await supabase
@@ -295,77 +312,36 @@ export default function Cases() {
           .select('agent_code')
           .eq('id', user?.id)
           .maybeSingle();
-
+        
         if (profile?.agent_code) {
-          finalCases = (data || []).filter(c => c.agent_id === profile.agent_code);
+          query = query.eq('agent_id', profile.agent_code);
         } else {
-          setCases([]);
-          setDisplayedCases([]);
-          setFilteredCases([]);
+          setAllCases([]);
+          setDisplayCases([]);
           setLoading(false);
           return;
         }
       }
-
-      setCases(finalCases);
-      setHasMore((totalCount || 0) > PAGE_SIZE);
+      
+      const { data, error } = await query.order("submission_date_timestamp", { ascending: false });
+      
+      if (error) throw error;
+      
+      setAllCases(data || []);
+      setHasMore((data?.length || 0) > PAGE_SIZE);
       
     } catch (error) {
       console.error("Error fetching cases:", error);
+      toast.error("Failed to load cases");
     } finally {
       setLoading(false);
     }
   };
 
-  const loadMoreCases = async () => {
-    if (loadingMore || !hasMore) return;
+  const applyFiltersAndPaginate = () => {
+    let filtered = [...allCases];
 
-    try {
-      setLoadingMore(true);
-      const nextPage = currentPage + 1;
-      const start = currentPage * PAGE_SIZE;
-      const end = (nextPage * PAGE_SIZE) - 1;
-
-      const { data, error } = await supabase
-        .from("cases")
-        .select("*")
-        .order("submission_date_timestamp", { ascending: false })
-        .range(start, end);
-
-      if (error) throw error;
-
-      if (data && data.length > 0) {
-        let newCases = data;
-        
-        if (!isAdmin) {
-          const { data: profile } = await supabase
-            .from('profiles')
-            .select('agent_code')
-            .eq('id', user?.id)
-            .maybeSingle();
-
-          if (profile?.agent_code) {
-            newCases = data.filter(c => c.agent_id === profile.agent_code);
-          }
-        }
-
-        const updatedCases = [...cases, ...newCases];
-        setCases(updatedCases);
-        setCurrentPage(nextPage);
-        setHasMore((nextPage * PAGE_SIZE) < totalCount);
-      } else {
-        setHasMore(false);
-      }
-    } catch (error) {
-      console.error("Error loading more cases:", error);
-    } finally {
-      setLoadingMore(false);
-    }
-  };
-
-  const applyFilters = () => {
-    let filtered = [...cases];
-
+    // Apply search filter
     if (filters.search) {
       const searchLower = filters.search.toLowerCase();
       filtered = filtered.filter(
@@ -376,19 +352,18 @@ export default function Cases() {
       );
     }
 
+    // Apply status filter
     if (filters.status !== "all") {
       filtered = filtered.filter((c) => {
         const statusLower = c.status.toLowerCase();
         const filterLower = filters.status.toLowerCase();
         
         if (filterLower === 'inforce') {
-          return statusLower.includes('inforce');
-        } else if (filterLower === 'approved') {
-          return statusLower.includes('approved') || statusLower.includes('issued');
+          return statusLower.includes('inforce') || statusLower.includes('approved') || statusLower.includes('issued');
         } else if (filterLower === 'pending') {
           return statusLower.includes('pending') || statusLower.includes('underwriting') || statusLower.includes('counter') || statusLower.includes('payment') || statusLower === 'entered';
-        } else if (filterLower === 'rejected') {
-          return statusLower.includes('reject') || statusLower.includes('decline');
+        } else if (filterLower === 'postponed') {
+          return statusLower.includes('postponed');
         } else if (filterLower === 'declined') {
           return statusLower.includes('decline');
         } else if (filterLower === 'cancelled') {
@@ -398,10 +373,12 @@ export default function Cases() {
       });
     }
 
+    // Apply payment frequency filter
     if (filters.paymentFrequency !== "all") {
       filtered = filtered.filter((c) => c.payment_frequency === filters.paymentFrequency);
     }
 
+    // Apply date range filter
     if (filters.dateRange.from) {
       filtered = filtered.filter((c) => {
         const caseDate = parseDate(c.submission_date_timestamp);
@@ -418,8 +395,18 @@ export default function Cases() {
       });
     }
 
-    setFilteredCases(filtered);
-    setDisplayedCases(filtered);
+    // Apply pagination for display
+    const start = 0;
+    const end = currentPage * PAGE_SIZE;
+    setDisplayCases(filtered.slice(start, end));
+    setHasMore(filtered.length > end);
+  };
+
+  const loadMoreCases = () => {
+    if (loadingMore) return;
+    setLoadingMore(true);
+    setCurrentPage(prev => prev + 1);
+    setTimeout(() => setLoadingMore(false), 300);
   };
 
   const handleDatePreset = (preset: string) => {
@@ -458,6 +445,7 @@ export default function Cases() {
       dateRange: { from, to },
       datePreset: preset
     }));
+    setCurrentPage(1);
   };
 
   const handleDateInputChange = (type: 'from' | 'to', value: string) => {
@@ -470,6 +458,7 @@ export default function Cases() {
         dateRange: { ...prev.dateRange, [type]: date },
         datePreset: "custom"
       }));
+      setCurrentPage(1);
     }
   };
 
@@ -480,6 +469,7 @@ export default function Cases() {
         dateRange: { ...prev.dateRange, [type]: null },
         datePreset: "custom"
       }));
+      setCurrentPage(1);
     }
   };
 
@@ -490,6 +480,7 @@ export default function Cases() {
         dateRange: { ...prev.dateRange, from: date },
         datePreset: "custom"
       }));
+      setCurrentPage(1);
     }
     setFromCalendarOpen(false);
   };
@@ -501,6 +492,7 @@ export default function Cases() {
         dateRange: { ...prev.dateRange, to: date },
         datePreset: "custom"
       }));
+      setCurrentPage(1);
     }
     setToCalendarOpen(false);
   };
@@ -514,6 +506,7 @@ export default function Cases() {
       paymentFrequency: "all"
     });
     setDateInputs({ from: "", to: "" });
+    setCurrentPage(1);
   };
 
   const getActiveFilterCount = () => {
@@ -525,8 +518,66 @@ export default function Cases() {
     return count;
   };
 
+  const getFilteredCases = () => {
+    let filtered = [...allCases];
+
+    if (filters.search) {
+      const searchLower = filters.search.toLowerCase();
+      filtered = filtered.filter(
+        (c) =>
+          c.policy_number?.toLowerCase().includes(searchLower) ||
+          c.client_name?.toLowerCase().includes(searchLower) ||
+          c.agent_id?.toLowerCase().includes(searchLower)
+      );
+    }
+
+    if (filters.status !== "all") {
+      filtered = filtered.filter((c) => {
+        const statusLower = c.status.toLowerCase();
+        const filterLower = filters.status.toLowerCase();
+        
+        if (filterLower === 'inforce') {
+          return statusLower.includes('inforce') || statusLower.includes('approved') || statusLower.includes('issued');
+        } else if (filterLower === 'pending') {
+          return statusLower.includes('pending') || statusLower.includes('underwriting') || statusLower.includes('counter') || statusLower.includes('payment') || statusLower === 'entered';
+        } else if (filterLower === 'postponed') {
+          return statusLower.includes('postponed');
+        } else if (filterLower === 'declined') {
+          return statusLower.includes('decline');
+        } else if (filterLower === 'cancelled') {
+          return statusLower.includes('cancel');
+        }
+        return c.status.toLowerCase() === filterLower;
+      });
+    }
+
+    if (filters.paymentFrequency !== "all") {
+      filtered = filtered.filter((c) => c.payment_frequency === filters.paymentFrequency);
+    }
+
+    if (filters.dateRange.from) {
+      filtered = filtered.filter((c) => {
+        const caseDate = parseDate(c.submission_date_timestamp);
+        return caseDate ? caseDate >= filters.dateRange.from! : false;
+      });
+    }
+
+    if (filters.dateRange.to) {
+      filtered = filtered.filter((c) => {
+        const caseDate = parseDate(c.submission_date_timestamp);
+        const endDate = new Date(filters.dateRange.to!);
+        endDate.setDate(endDate.getDate() + 1);
+        return caseDate ? caseDate <= endDate : false;
+      });
+    }
+
+    return filtered;
+  };
+
   const handleExportStyledExcel = () => {
-    if (filteredCases.length === 0) {
+    const filteredForExport = getFilteredCases();
+    
+    if (filteredForExport.length === 0) {
       toast.error("No data to export based on current filters.");
       return;
     }
@@ -549,11 +600,11 @@ export default function Cases() {
         [`Search Query: ${filters.search || "None"}`],
         [""],
         ["Report Summary"],
-        [`Total Cases: ${filteredCases.length}`],
-        [`Total AFYC: ${calculateTotalPremium().toLocaleString()}`],
-        [`Approved Cases: ${filteredCases.filter(c => getStatusVariant(c.status) === "approved").length}`],
-        [`Pending Cases: ${filteredCases.filter(c => getStatusVariant(c.status) === "pending").length}`],
-        [`Rejected Cases: ${filteredCases.filter(c => getStatusVariant(c.status) === "rejected").length}`],
+        [`Total Cases: ${filteredForExport.length}`],
+        [`Total AFYC (Approved + Pending + Postponed): ${calculateTotalPremium(filteredForExport).toLocaleString()}`],
+        [`Approved/Inforce Cases: ${filteredForExport.filter(c => getStatusVariant(c.status) === "approved").length}`],
+        [`Pending Cases (incl. Postponed): ${filteredForExport.filter(c => getStatusVariant(c.status) === "pending").length}`],
+        [`Declined/Cancelled Cases: ${filteredForExport.filter(c => isDeclinedOrCancelled(c.status)).length}`],
         [""],
         ["Prepared by: SuperAchiever System"],
         ["This report is auto-generated by SuperAchiever Data Management System"],
@@ -563,7 +614,7 @@ export default function Cases() {
       wsCover['!cols'] = [{ wch: 50 }];
       XLSX.utils.book_append_sheet(wb, wsCover, "Cover");
 
-      const exportData = filteredCases.map((c, index) => ({
+      const exportData = filteredForExport.map((c, index) => ({
         "No.": index + 1,
         "Policy Number": c.policy_number,
         "Agent ID": c.agent_id,
@@ -578,18 +629,19 @@ export default function Cases() {
           ? format(parseDate(c.enforce_date) || new Date(), "dd MMM yyyy") 
           : "N/A",
         "Payment Frequency": c.payment_frequency || "N/A",
+        "Included in AFYC": isAFYCEligible(c.status) ? "Yes" : "No"
       }));
 
       const wsData = XLSX.utils.json_to_sheet(exportData);
       wsData['!cols'] = [
         { wch: 6 }, { wch: 18 }, { wch: 12 }, { wch: 30 }, { wch: 15 },
-        { wch: 15 }, { wch: 12 }, { wch: 15 }, { wch: 15 }, { wch: 18 },
+        { wch: 15 }, { wch: 12 }, { wch: 15 }, { wch: 15 }, { wch: 18 }, { wch: 12 }
       ];
       XLSX.utils.book_append_sheet(wb, wsData, "All Cases");
 
-      const approvedCount = filteredCases.filter(c => getStatusVariant(c.status) === "approved").length;
-      const pendingCount = filteredCases.filter(c => getStatusVariant(c.status) === "pending").length;
-      const rejectedCount = filteredCases.filter(c => getStatusVariant(c.status) === "rejected").length;
+      const approvedCount = filteredForExport.filter(c => getStatusVariant(c.status) === "approved").length;
+      const pendingCount = filteredForExport.filter(c => getStatusVariant(c.status) === "pending").length;
+      const declinedCancelledCount = filteredForExport.filter(c => isDeclinedOrCancelled(c.status)).length;
       
       const summaryData = [
         { "Metric": "Report Information", "Value": "" },
@@ -598,18 +650,18 @@ export default function Cases() {
         { "Metric": "Generated By", "Value": user?.email || "System" },
         { "Metric": "", "Value": "" },
         { "Metric": "Production Summary", "Value": "" },
-        { "Metric": "Total Cases", "Value": filteredCases.length },
-        { "Metric": "Total AFYC", "Value": `RM ${calculateTotalPremium().toLocaleString()}` },
-        { "Metric": "Average AFYC per Case", "Value": filteredCases.length > 0 ? `RM ${Math.round(calculateTotalPremium() / filteredCases.length).toLocaleString()}` : "RM 0" },
+        { "Metric": "Total Cases", "Value": filteredForExport.length },
+        { "Metric": "Total AFYC (Approved + Pending + Postponed)", "Value": `RM ${calculateTotalPremium(filteredForExport).toLocaleString()}` },
+        { "Metric": "Average AFYC per Case", "Value": filteredForExport.length > 0 ? `RM ${Math.round(calculateTotalPremium(filteredForExport) / filteredForExport.length).toLocaleString()}` : "RM 0" },
         { "Metric": "", "Value": "" },
         { "Metric": "Status Breakdown", "Value": "" },
-        { "Metric": "Approved/Inforce Cases", "Value": `${approvedCount} (${filteredCases.length > 0 ? Math.round((approvedCount / filteredCases.length) * 100) : 0}%)` },
-        { "Metric": "Pending Cases", "Value": `${pendingCount} (${filteredCases.length > 0 ? Math.round((pendingCount / filteredCases.length) * 100) : 0}%)` },
-        { "Metric": "Rejected/Declined/Cancelled Cases", "Value": `${rejectedCount} (${filteredCases.length > 0 ? Math.round((rejectedCount / filteredCases.length) * 100) : 0}%)` },
+        { "Metric": "Approved/Inforce Cases", "Value": `${approvedCount} (${filteredForExport.length > 0 ? Math.round((approvedCount / filteredForExport.length) * 100) : 0}%)` },
+        { "Metric": "Pending Cases (incl. Postponed)", "Value": `${pendingCount} (${filteredForExport.length > 0 ? Math.round((pendingCount / filteredForExport.length) * 100) : 0}%)` },
+        { "Metric": "Declined/Cancelled Cases", "Value": `${declinedCancelledCount} (${filteredForExport.length > 0 ? Math.round((declinedCancelledCount / filteredForExport.length) * 100) : 0}%)` },
       ];
       
       const wsSummary = XLSX.utils.json_to_sheet(summaryData);
-      wsSummary['!cols'] = [{ wch: 35 }, { wch: 30 }];
+      wsSummary['!cols'] = [{ wch: 40 }, { wch: 30 }];
       XLSX.utils.book_append_sheet(wb, wsSummary, "Summary");
 
       const dateStr = format(new Date(), "yyyyMMdd_HHmm");
@@ -618,7 +670,7 @@ export default function Cases() {
 
       XLSX.writeFile(wb, filename);
       
-      toast.success(`Exported ${filteredCases.length} cases to beautifully formatted Excel`);
+      toast.success(`Exported ${filteredForExport.length} cases to beautifully formatted Excel`);
     } catch (error) {
       console.error("Export error:", error);
       toast.error("Failed to export data");
@@ -628,19 +680,21 @@ export default function Cases() {
   };
 
   const handleExportCSV = () => {
-    if (filteredCases.length === 0) {
+    const filteredForExport = getFilteredCases();
+    
+    if (filteredForExport.length === 0) {
       toast.error("No data to export based on current filters.");
       return;
     }
 
     const headers = [
       "Policy Number", "Agent ID", "Agent Name", "Product", "AFYC", 
-      "Status", "Submission Date", "Enforce Date", "Payment Frequency"
+      "Status", "Submission Date", "Enforce Date", "Payment Frequency", "Included in AFYC"
     ];
     
     const csvContent = [
       headers.join(","),
-      ...filteredCases.map(c => [
+      ...filteredForExport.map(c => [
         c.policy_number,
         c.agent_id,
         `"${c.client_name.replace(/"/g, '""')}"`,
@@ -649,7 +703,8 @@ export default function Cases() {
         getStatusLabel(c.status),
         c.submission_date_timestamp ? format(parseDate(c.submission_date_timestamp) || new Date(), "yyyy-MM-dd") : "N/A",
         c.enforce_date ? format(parseDate(c.enforce_date) || new Date(), "yyyy-MM-dd") : "N/A",
-        c.payment_frequency || "N/A"
+        c.payment_frequency || "N/A",
+        isAFYCEligible(c.status) ? "Yes" : "No"
       ].join(","))
     ].join("\n");
 
@@ -666,28 +721,30 @@ export default function Cases() {
     link.click();
     document.body.removeChild(link);
     
-    toast.success(`Exported ${filteredCases.length} cases to CSV`);
+    toast.success(`Exported ${filteredForExport.length} cases to CSV`);
   };
 
-  const calculateTotalPremium = () => {
-    return filteredCases.reduce((sum, c) => sum + (c.premium || 0), 0);
+  const calculateTotalPremium = (casesToCalculate: Case[]) => {
+    return casesToCalculate
+      .filter(c => isAFYCEligible(c.status))
+      .reduce((sum, c) => sum + (c.premium || 0), 0);
   };
 
-  // Custom StatusBadge component for colored status display
   const StatusBadge = ({ status }: { status: string }) => {
     const variant = getStatusVariant(status);
     const label = getStatusLabel(status);
+    const isPostponed = status.toLowerCase().includes('postponed');
     
     const variantStyles = {
       approved: "bg-emerald-100 text-emerald-700 border-emerald-200",
-      pending: "bg-amber-100 text-amber-700 border-amber-200",
+      pending: isPostponed ? "bg-orange-100 text-orange-700 border-orange-200" : "bg-amber-100 text-amber-700 border-amber-200",
       rejected: "bg-rose-100 text-rose-700 border-rose-200"
     };
     
     const icons = {
       approved: <CheckCircle2 className="h-3 w-3 mr-1" />,
       pending: <Clock className="h-3 w-3 mr-1" />,
-      rejected: <AlertCircle className="h-3 w-3 mr-1" />
+      rejected: <Ban className="h-3 w-3 mr-1" />
     };
     
     return (
@@ -712,17 +769,17 @@ export default function Cases() {
   
   if (!user) return <Navigate to="/auth" replace />;
 
-  // Calculate stats for the cards using getStatusVariant
-  const totalCasesCount = filteredCases.length;
-  const approvedCount = filteredCases.filter(c => getStatusVariant(c.status) === "approved").length;
-  const pendingCount = filteredCases.filter(c => getStatusVariant(c.status) === "pending").length;
-  const rejectedCount = filteredCases.filter(c => getStatusVariant(c.status) === "rejected").length;
-  const totalPremiumSum = calculateTotalPremium();
+  const filteredForStats = getFilteredCases();
+  const totalCasesCount = filteredForStats.length;
+  const approvedCount = filteredForStats.filter(c => getStatusVariant(c.status) === "approved").length;
+  const pendingCount = filteredForStats.filter(c => getStatusVariant(c.status) === "pending").length;
+  const declinedCancelledCount = filteredForStats.filter(c => isDeclinedOrCancelled(c.status)).length;
+  const totalPremiumSum = calculateTotalPremium(filteredForStats);
 
   return (
     <DashboardLayout>
       <div className="space-y-6 animate-fade-in">
-        {/* Header with Animation */}
+        {/* Header */}
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div className="space-y-1 animate-slide-in-right">
             <div className="flex items-center gap-3">
@@ -741,7 +798,7 @@ export default function Cases() {
             </div>
           </div>
           
-          {isAdmin && filteredCases.length > 0 && (
+          {isAdmin && filteredForStats.length > 0 && (
             <div className="flex items-center gap-2 animate-slide-in-left">
               <Button 
                 variant="outline" 
@@ -777,15 +834,15 @@ export default function Cases() {
           )}
         </div>
 
-        {/* Stats Cards - Fixed to show correct counts */}
-        <div className="grid gap-4 md:grid-cols-4">
+        {/* Stats Cards - Now showing accurate counts from all cases */}
+        <div className="grid gap-4 md:grid-cols-5">
           <Card className="border-none shadow-lg hover:shadow-xl transition-all duration-300 animate-fade-in-up bg-gradient-to-br from-blue-50 to-white">
             <CardContent className="flex items-center gap-4 p-5">
               <div className="rounded-xl bg-blue-100 p-3">
                 <Database className="h-6 w-6 text-blue-600" />
               </div>
               <div>
-                <p className="text-2xl font-black text-blue-900">{totalCasesCount}</p>
+                <p className="text-2xl font-black text-blue-900">{totalCasesCount.toLocaleString()}</p>
                 <p className="text-[10px] font-bold text-blue-500 uppercase tracking-widest">Total Cases</p>
               </div>
             </CardContent>
@@ -797,7 +854,7 @@ export default function Cases() {
                 <CheckCircle2 className="h-6 w-6 text-emerald-600" />
               </div>
               <div>
-                <p className="text-2xl font-black text-emerald-900">{approvedCount}</p>
+                <p className="text-2xl font-black text-emerald-900">{approvedCount.toLocaleString()}</p>
                 <p className="text-[10px] font-bold text-emerald-500 uppercase tracking-widest">Approved/Inforce</p>
               </div>
             </CardContent>
@@ -809,27 +866,40 @@ export default function Cases() {
                 <Clock className="h-6 w-6 text-amber-600" />
               </div>
               <div>
-                <p className="text-2xl font-black text-amber-900">{pendingCount}</p>
-                <p className="text-[10px] font-bold text-amber-500 uppercase tracking-widest">Pending</p>
+                <p className="text-2xl font-black text-amber-900">{pendingCount.toLocaleString()}</p>
+                <p className="text-[10px] font-bold text-amber-500 uppercase tracking-widest">Pending (incl. Postponed)</p>
               </div>
             </CardContent>
           </Card>
           
-          <Card className="border-none shadow-lg hover:shadow-xl transition-all duration-300 animate-fade-in-up bg-gradient-to-br from-purple-50 to-white" style={{ animationDelay: "0.3s" }}>
+          <Card className="border-none shadow-lg hover:shadow-xl transition-all duration-300 animate-fade-in-up bg-gradient-to-br from-rose-50 to-white" style={{ animationDelay: "0.3s" }}>
+            <CardContent className="flex items-center gap-4 p-5">
+              <div className="rounded-xl bg-rose-100 p-3">
+                <Ban className="h-6 w-6 text-rose-600" />
+              </div>
+              <div>
+                <p className="text-2xl font-black text-rose-900">{declinedCancelledCount.toLocaleString()}</p>
+                <p className="text-[10px] font-bold text-rose-500 uppercase tracking-widest">Declined/Cancelled</p>
+              </div>
+            </CardContent>
+          </Card>
+          
+          <Card className="border-none shadow-lg hover:shadow-xl transition-all duration-300 animate-fade-in-up bg-gradient-to-br from-purple-50 to-white" style={{ animationDelay: "0.4s" }}>
             <CardContent className="flex items-center gap-4 p-5">
               <div className="rounded-xl bg-purple-100 p-3">
                 <TrendingUp className="h-6 w-6 text-purple-600" />
               </div>
               <div>
                 <p className="text-2xl font-black text-purple-900">{formatAFYC(totalPremiumSum)}</p>
-                <p className="text-[10px] font-bold text-purple-500 uppercase tracking-widest">Total AFYC</p>
+                <p className="text-[10px] font-bold text-purple-500 uppercase tracking-widest">Total AFYC*</p>
+                <p className="text-[6px] text-purple-400 mt-0.5">*Approved + Pending + Postponed</p>
               </div>
             </CardContent>
           </Card>
         </div>
 
         {/* Search and Filter Bar */}
-        <div className="flex flex-wrap items-center gap-3 p-4 bg-gradient-to-r from-slate-50 to-white rounded-xl border animate-fade-in-up" style={{ animationDelay: "0.4s" }}>
+        <div className="flex flex-wrap items-center gap-3 p-4 bg-gradient-to-r from-slate-50 to-white rounded-xl border animate-fade-in-up" style={{ animationDelay: "0.5s" }}>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="outline" className="gap-2">
@@ -925,7 +995,7 @@ export default function Cases() {
               <SelectItem value="all">All Status</SelectItem>
               <SelectItem value="inforce">Inforce / Approved</SelectItem>
               <SelectItem value="pending">Pending</SelectItem>
-              <SelectItem value="rejected">Rejected</SelectItem>
+              <SelectItem value="postponed">Postponed</SelectItem>
               <SelectItem value="declined">Declined</SelectItem>
               <SelectItem value="cancelled">Cancelled</SelectItem>
             </SelectContent>
@@ -953,15 +1023,18 @@ export default function Cases() {
         </div>
 
         {/* Results Summary */}
-        <div className="flex justify-between items-center animate-fade-in-up" style={{ animationDelay: "0.5s" }}>
+        <div className="flex justify-between items-center animate-fade-in-up" style={{ animationDelay: "0.6s" }}>
           <div className="flex items-center gap-3">
             <Badge variant="outline" className="px-3 py-1 text-sm font-bold">
               <FileText className="h-3 w-3 mr-1" />
-              {totalCasesCount} of {totalCount} cases
+              {displayCases.length} of {filteredForStats.length} cases
             </Badge>
             <Badge variant="outline" className="px-3 py-1 text-sm font-bold bg-emerald-50 text-emerald-700 border-emerald-200">
               <TrendingUp className="h-3 w-3 mr-1" />
               {formatAFYC(totalPremiumSum)}
+            </Badge>
+            <Badge variant="outline" className="px-3 py-1 text-[8px] font-bold bg-purple-50 text-purple-600 border-purple-200">
+              *AFYC includes Approved + Pending + Postponed only
             </Badge>
           </div>
           {filters.dateRange.from && filters.dateRange.to && (
@@ -973,14 +1046,14 @@ export default function Cases() {
         </div>
 
         {/* Cases Table */}
-        <Card className="border-none shadow-xl overflow-hidden animate-fade-in-up" style={{ animationDelay: "0.6s" }}>
+        <Card className="border-none shadow-xl overflow-hidden animate-fade-in-up" style={{ animationDelay: "0.7s" }}>
           <CardContent className="p-0">
             {loading ? (
               <div className="py-20 text-center">
                 <Loader2 className="animate-spin mx-auto h-8 w-8 text-primary" />
                 <p className="text-sm text-muted-foreground mt-2">Loading cases...</p>
               </div>
-            ) : filteredCases.length === 0 ? (
+            ) : displayCases.length === 0 ? (
               <div className="py-20 text-center">
                 <div className="relative w-24 h-24 mx-auto mb-4">
                   <FileText className="h-16 w-16 mx-auto text-slate-300 opacity-30" />
@@ -1012,7 +1085,7 @@ export default function Cases() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {filteredCases.map((item, index) => (
+                      {displayCases.map((item, index) => (
                         <TableRow 
                           key={item.id} 
                           className="hover:bg-slate-50/50 transition-colors group animate-slide-in-right"
@@ -1060,7 +1133,7 @@ export default function Cases() {
                   </Table>
                 </div>
 
-                {hasMore && filteredCases.length === cases.length && (
+                {hasMore && (
                   <div className="flex justify-center py-6 border-t">
                     <Button
                       variant="outline"

@@ -27,6 +27,7 @@ import {
   ChevronRight,
   AlertTriangle,
   AlertOctagon,
+  XCircle,
 } from "lucide-react";
 import { format, parseISO, isValid, startOfMonth, endOfMonth, startOfYear, endOfYear, differenceInDays } from "date-fns";
 import { SuperAchieverHeader } from "@/components/dashboard/SuperAchieverHeader";
@@ -96,7 +97,7 @@ interface StatDetail {
   details: { label: string; value: string | number }[];
 }
 
-// Helper function to check if a status is pending
+// Helper function to check if a status is pending (includes postponed)
 const isPendingStatus = (status: string): boolean => {
   if (!status) return false;
   const statusLower = status.toLowerCase();
@@ -104,6 +105,7 @@ const isPendingStatus = (status: string): boolean => {
          statusLower.includes('underwriting') || 
          statusLower.includes('counter') || 
          statusLower.includes('payment') ||
+         statusLower.includes('postponed') ||
          statusLower === 'entered';
 };
 
@@ -114,6 +116,17 @@ const isApprovedStatus = (status: string): boolean => {
   return statusLower.includes('inforce') || 
          statusLower.includes('approved') || 
          statusLower.includes('issued');
+};
+
+// Helper function to check if status is declined/cancelled/rejected (excludes postponed)
+const isDeclinedStatus = (status: string): boolean => {
+  if (!status) return false;
+  const statusLower = status.toLowerCase();
+  return statusLower.includes('reject') || 
+         statusLower.includes('decline') || 
+         statusLower.includes('cancelled') ||
+         statusLower.includes('cancel');
+  // Note: 'postponed' is NOT included here - it's considered pending
 };
 
 // Helper functions
@@ -405,13 +418,29 @@ export default function Dashboard() {
   const terminatedAgents = profiles.filter(p => p.status?.toLowerCase() === 'terminated').length;
   const suspendedAgents = profiles.filter(p => p.status?.toLowerCase() === 'suspended').length;
 
-  // MTD Calculation
-  const currentMonthStart = getCurrentMonthStart();
+  // ============================================
+  // MTD CALCULATION
+  // ============================================
   
-  const mtdCases = cases.filter((c) => {
-    if (c.entry_month) {
-      return c.entry_month === currentMonthStart;
+  // MTD Approved/Inforce Cases (based on enforce_date)
+  const mtdApprovedCases = cases.filter((c) => {
+    if (!isApprovedStatus(c.status)) return false;
+    if (c.enforce_date) {
+      try {
+        const date = parseISO(c.enforce_date);
+        if (isValid(date)) {
+          return date.getMonth() === currentMonth && date.getFullYear() === currentYear;
+        }
+      } catch (e) {
+        console.error('Error parsing enforce date:', e);
+      }
     }
+    return false;
+  });
+  
+  // MTD Pending Cases (based on submission_date_timestamp)
+  const mtdPendingCases = cases.filter((c) => {
+    if (!isPendingStatus(c.status)) return false;
     if (c.submission_date_timestamp) {
       try {
         const date = parseISO(c.submission_date_timestamp);
@@ -419,25 +448,65 @@ export default function Dashboard() {
           return date.getMonth() === currentMonth && date.getFullYear() === currentYear;
         }
       } catch (e) {
-        console.error('Error parsing date:', e);
+        console.error('Error parsing submission date:', e);
       }
     }
     return false;
   });
   
-  const mtdApproved = mtdCases.filter((c) => isApprovedStatus(c.status)).length;
-  const mtdPending = mtdCases.filter((c) => isPendingStatus(c.status)).length;
-  const mtdPremium = mtdCases.reduce((s, c) => s + (Number(c.premium) || 0), 0);
-  const mtdApprovedPremium = mtdCases.filter(c => isApprovedStatus(c.status)).reduce((s, c) => s + (Number(c.premium) || 0), 0);
-  const mtdPendingPremium = mtdCases.filter(c => isPendingStatus(c.status)).reduce((s, c) => s + (Number(c.premium) || 0), 0);
-
-  // YTD Calculation
-  const currentYearStart = getCurrentYearStart();
-  
-  const ytdCases = cases.filter((c) => {
-    if (c.entry_month) {
-      return c.entry_month >= currentYearStart;
+  // MTD Declined/Cancelled Cases (based on submission_date_timestamp)
+  const mtdDeclinedCases = cases.filter((c) => {
+    if (!isDeclinedStatus(c.status)) return false;
+    if (c.submission_date_timestamp) {
+      try {
+        const date = parseISO(c.submission_date_timestamp);
+        if (isValid(date)) {
+          return date.getMonth() === currentMonth && date.getFullYear() === currentYear;
+        }
+      } catch (e) {
+        console.error('Error parsing submission date:', e);
+      }
     }
+    return false;
+  });
+  
+  // MTD Total Cases (includes all)
+  const mtdTotalCases = [...mtdApprovedCases, ...mtdPendingCases, ...mtdDeclinedCases];
+  const mtdApproved = mtdApprovedCases.length;
+  const mtdPending = mtdPendingCases.length;
+  const mtdDeclined = mtdDeclinedCases.length;
+  
+  // MTD Premium calculations - Separate for Total AFYC card (only approved + pending)
+  const mtdApprovedPremium = mtdApprovedCases.reduce((s, c) => s + (Number(c.premium) || 0), 0);
+  const mtdPendingPremium = mtdPendingCases.reduce((s, c) => s + (Number(c.premium) || 0), 0);
+  const mtdDeclinedPremium = mtdDeclinedCases.reduce((s, c) => s + (Number(c.premium) || 0), 0);
+  
+  // Total AFYC for the card (ONLY approved + pending - excludes declined)
+  const mtdTotalPremium = mtdApprovedPremium + mtdPendingPremium;
+
+  // ============================================
+  // YTD CALCULATION
+  // ============================================
+  
+  // YTD Approved/Inforce Cases (based on enforce_date)
+  const ytdApprovedCases = cases.filter((c) => {
+    if (!isApprovedStatus(c.status)) return false;
+    if (c.enforce_date) {
+      try {
+        const date = parseISO(c.enforce_date);
+        if (isValid(date)) {
+          return date.getFullYear() === currentYear;
+        }
+      } catch (e) {
+        console.error('Error parsing enforce date:', e);
+      }
+    }
+    return false;
+  });
+  
+  // YTD Pending Cases (based on submission_date_timestamp)
+  const ytdPendingCases = cases.filter((c) => {
+    if (!isPendingStatus(c.status)) return false;
     if (c.submission_date_timestamp) {
       try {
         const date = parseISO(c.submission_date_timestamp);
@@ -445,36 +514,63 @@ export default function Dashboard() {
           return date.getFullYear() === currentYear;
         }
       } catch (e) {
-        console.error('Error parsing date:', e);
+        console.error('Error parsing submission date:', e);
       }
     }
     return false;
   });
   
-  const ytdApproved = ytdCases.filter((c) => isApprovedStatus(c.status)).length;
-  const ytdPending = ytdCases.filter((c) => isPendingStatus(c.status)).length;
-  const ytdPremium = ytdCases.reduce((s, c) => s + (Number(c.premium) || 0), 0);
-  const ytdApprovedPremium = ytdCases.filter(c => isApprovedStatus(c.status)).reduce((s, c) => s + (Number(c.premium) || 0), 0);
-  const ytdPendingPremium = ytdCases.filter(c => isPendingStatus(c.status)).reduce((s, c) => s + (Number(c.premium) || 0), 0);
+  // YTD Declined/Cancelled Cases (based on submission_date_timestamp)
+  const ytdDeclinedCases = cases.filter((c) => {
+    if (!isDeclinedStatus(c.status)) return false;
+    if (c.submission_date_timestamp) {
+      try {
+        const date = parseISO(c.submission_date_timestamp);
+        if (isValid(date)) {
+          return date.getFullYear() === currentYear;
+        }
+      } catch (e) {
+        console.error('Error parsing submission date:', e);
+      }
+    }
+    return false;
+  });
+  
+  // YTD Total Cases (includes all)
+  const ytdTotalCases = [...ytdApprovedCases, ...ytdPendingCases, ...ytdDeclinedCases];
+  const ytdApproved = ytdApprovedCases.length;
+  const ytdPending = ytdPendingCases.length;
+  const ytdDeclined = ytdDeclinedCases.length;
+  
+  // YTD Premium calculations - Separate for Total AFYC card (only approved + pending)
+  const ytdApprovedPremium = ytdApprovedCases.reduce((s, c) => s + (Number(c.premium) || 0), 0);
+  const ytdPendingPremium = ytdPendingCases.reduce((s, c) => s + (Number(c.premium) || 0), 0);
+  const ytdDeclinedPremium = ytdDeclinedCases.reduce((s, c) => s + (Number(c.premium) || 0), 0);
+  
+  // Total AFYC for the card (ONLY approved + pending - excludes declined)
+  const ytdTotalPremium = ytdApprovedPremium + ytdPendingPremium;
 
-  // Lifetime stats
+  // Lifetime stats (all cases)
   const totalCases = cases.length;
   const totalApproved = cases.filter(c => isApprovedStatus(c.status)).length;
   const totalPending = cases.filter(c => isPendingStatus(c.status)).length;
-  const totalPremium = cases.reduce((s, c) => s + (Number(c.premium) || 0), 0);
+  const totalDeclined = cases.filter(c => isDeclinedStatus(c.status)).length;
+  const totalPremium = cases.filter(c => isApprovedStatus(c.status) || isPendingStatus(c.status)).reduce((s, c) => s + (Number(c.premium) || 0), 0);
 
+  // MTD Stats - Total Cases card shows total including declined, Total AFYC card shows only approved+pending
   const mtdStats = [
     {
       title: "MTD Cases",
-      value: formatNumber(mtdCases.length),
+      value: formatNumber(mtdTotalCases.length),
       subtitle: filterMode ? `${monthOptions[currentMonth]?.label} ${currentYear} (Filtered)` : format(currentDate, "MMMM yyyy"),
       icon: <FileText className="h-6 w-6" />,
       variant: "default" as const,
       details: [
-        { label: "Approved", value: formatNumber(mtdApproved) },
+        { label: "Approved/Inforce", value: formatNumber(mtdApproved) },
         { label: "Pending", value: formatNumber(mtdPending) },
-        { label: "Total AFYC", value: formatAFYC(mtdPremium) },
-        { label: "Approval Rate", value: mtdCases.length ? `${Math.round((mtdApproved / mtdCases.length) * 100)}%` : "0%" },
+        { label: "Declined/Cancelled", value: formatNumber(mtdDeclined) },
+        { label: "Total AFYC (Approved+Pending)", value: formatAFYC(mtdTotalPremium) },
+        { label: "Approval Rate", value: mtdTotalCases.length ? `${Math.round((mtdApproved / mtdTotalCases.length) * 100)}%` : "0%" },
         { label: "Filter Period", value: `${monthOptions[currentMonth]?.label} ${currentYear}` },
       ],
     },
@@ -488,7 +584,7 @@ export default function Dashboard() {
         { label: "Number of Cases", value: formatNumber(mtdApproved) },
         { label: "Total AFYC", value: formatAFYC(mtdApprovedPremium) },
         { label: "Average per Case", value: mtdApproved ? formatAFYC(mtdApprovedPremium / mtdApproved) : "0 AFYC" },
-        { label: "Approval Rate", value: mtdCases.length ? `${Math.round((mtdApproved / mtdCases.length) * 100)}%` : "0%" },
+        { label: "Approval Rate", value: mtdTotalCases.length ? `${Math.round((mtdApproved / mtdTotalCases.length) * 100)}%` : "0%" },
       ],
     },
     {
@@ -501,37 +597,38 @@ export default function Dashboard() {
         { label: "Number of Cases", value: formatNumber(mtdPending) },
         { label: "Total AFYC", value: formatAFYC(mtdPendingPremium) },
         { label: "Average per Case", value: mtdPending ? formatAFYC(mtdPendingPremium / mtdPending) : "0 AFYC" },
-        { label: "Pending Rate", value: mtdCases.length ? `${Math.round((mtdPending / mtdCases.length) * 100)}%` : "0%" },
+        { label: "Pending Rate", value: mtdTotalCases.length ? `${Math.round((mtdPending / mtdTotalCases.length) * 100)}%` : "0%" },
       ],
     },
     {
       title: "MTD Total AFYC",
-      value: formatAFYC(mtdPremium),
+      value: formatAFYC(mtdTotalPremium),
       subtitle: filterMode ? `${monthOptions[currentMonth]?.label} ${currentYear} (Filtered)` : format(currentDate, "MMMM yyyy"),
       icon: <DollarSign className="h-6 w-6" />,
       variant: "primary" as const,
       details: [
         { label: "Approved AFYC", value: formatAFYC(mtdApprovedPremium) },
         { label: "Pending AFYC", value: formatAFYC(mtdPendingPremium) },
-        { label: "Average per Case", value: mtdCases.length ? formatAFYC(mtdPremium / mtdCases.length) : "0 AFYC" },
-        { label: "Total Cases", value: formatNumber(mtdCases.length) },
+        { label: "Total Cases (Approved+Pending)", value: formatNumber(mtdApproved + mtdPending) },
       ],
     },
   ];
 
+  // YTD Stats - Total Cases card shows total including declined, Total AFYC card shows only approved+pending
   const ytdStats = [
     {
       title: "YTD Cases",
-      value: formatNumber(ytdCases.length),
+      value: formatNumber(ytdTotalCases.length),
       subtitle: filterMode ? `${currentYear} Year-to-Date (Filtered)` : `${currentYear} Year-to-Date`,
       icon: <BarChart3 className="h-6 w-6" />,
       variant: "default" as const,
       details: [
-        { label: "Approved", value: formatNumber(ytdApproved) },
+        { label: "Approved/Inforce", value: formatNumber(ytdApproved) },
         { label: "Pending", value: formatNumber(ytdPending) },
-        { label: "Total AFYC", value: formatAFYC(ytdPremium) },
-        { label: "Approval Rate", value: ytdCases.length ? `${Math.round((ytdApproved / ytdCases.length) * 100)}%` : "0%" },
-        { label: "Filter Period", value: `${currentYear} Year-to-Date (Jan - ${monthOptions[currentMonth]?.label})` },
+        { label: "Declined/Cancelled", value: formatNumber(ytdDeclined) },
+        { label: "Total AFYC (Approved+Pending)", value: formatAFYC(ytdTotalPremium) },
+        { label: "Approval Rate", value: ytdTotalCases.length ? `${Math.round((ytdApproved / ytdTotalCases.length) * 100)}%` : "0%" },
+        { label: "Filter Period", value: `${currentYear} Year-to-Date` },
       ],
     },
     {
@@ -557,21 +654,19 @@ export default function Dashboard() {
         { label: "Number of Cases", value: formatNumber(ytdPending) },
         { label: "Total AFYC", value: formatAFYC(ytdPendingPremium) },
         { label: "Average per Case", value: ytdPending ? formatAFYC(ytdPendingPremium / ytdPending) : "0 AFYC" },
-        { label: "Pending Rate", value: ytdCases.length ? `${Math.round((ytdPending / ytdCases.length) * 100)}%` : "0%" },
+        { label: "Pending Rate", value: ytdTotalCases.length ? `${Math.round((ytdPending / ytdTotalCases.length) * 100)}%` : "0%" },
       ],
     },
     {
       title: "YTD Total AFYC",
-      value: formatAFYC(ytdPremium),
+      value: formatAFYC(ytdTotalPremium),
       subtitle: filterMode ? `${currentYear} Year-to-Date (Filtered)` : `${currentYear} Year-to-Date`,
       icon: <TrendingUp className="h-6 w-6" />,
       variant: "primary" as const,
       details: [
         { label: "Approved AFYC", value: formatAFYC(ytdApprovedPremium) },
         { label: "Pending AFYC", value: formatAFYC(ytdPendingPremium) },
-        { label: "Average per Case", value: ytdCases.length ? formatAFYC(ytdPremium / ytdCases.length) : "0 AFYC" },
-        { label: "Total Cases", value: formatNumber(ytdCases.length) },
-        { label: "Monthly Average", value: formatAFYC(ytdPremium / (currentMonth + 1)) },
+        { label: "Total Cases (Approved+Pending)", value: formatNumber(ytdApproved + ytdPending) },
       ],
     },
   ];
@@ -649,7 +744,7 @@ export default function Dashboard() {
       <div className="space-y-6">
         <SuperAchieverHeader lastUploadDate={lastUploadDate} />
 
-        {/* Filter Toggle and Month Selector - Renamed */}
+        {/* Filter Toggle and Month Selector */}
         <div className="flex items-center justify-between gap-4 p-4 bg-slate-50 rounded-lg border border-slate-200">
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-2">
@@ -771,7 +866,7 @@ export default function Dashboard() {
               Month-to-Date Performance
             </h2>
             <Badge variant="outline" className="text-xs">
-              {mtdCases.length > 0 ? `${mtdCases.length} Cases` : 'No Data'}
+              {mtdTotalCases.length > 0 ? `${mtdTotalCases.length} Cases` : 'No Data'}
             </Badge>
           </div>
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
@@ -809,7 +904,7 @@ export default function Dashboard() {
               Year-to-Date Performance
             </h2>
             <Badge variant="outline" className="text-xs">
-              {ytdCases.length > 0 ? `${ytdCases.length} Cases` : 'No Data'}
+              {ytdTotalCases.length > 0 ? `${ytdTotalCases.length} Cases` : 'No Data'}
             </Badge>
           </div>
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
